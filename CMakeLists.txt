@@ -1,7 +1,7 @@
 # ------------------------------------------------------------
 # @file CMakeLists.txt
 #
-# @version 1.1.0
+# @version 1.2.0
 # @author BleckWolf25
 # @license MIT
 #
@@ -21,6 +21,7 @@ project(NovaUI VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
 
@@ -36,6 +37,8 @@ add_executable(NovaUI WIN32
   src/Core/ShellTaskbar.cpp
   src/Modules/TaskbarUI.cpp
   src/Modules/TaskTracker.cpp
+  src/Modules/TrayTracker.cpp
+  src/Modules/TaskbarFlyout.cpp
   src/Modules/ClockWidget.cpp
   src/Render/Renderer.cpp
 )
@@ -51,6 +54,7 @@ target_link_libraries(NovaUI PRIVATE
   dcomp
   dwmapi
   windowscodecs
+  comctl32
   shell32
   propsys
   uuid
