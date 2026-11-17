@@ -1,7 +1,7 @@
 /**
  * @file Renderer.h
  *
- * @version 1.2.0
+ * @version 1.3.0
  * @author BleckWolf25
  * @license MIT
  *
@@ -33,6 +33,8 @@ public:
     void resize(UINT width, UINT height);
     void setDpi(float dpi);
 
+    ID2D1Factory1* factory() const noexcept { return m_d2dFactory.Get(); }
+
     ID2D1SolidColorBrush* brush(const D2D1_COLOR_F& color);
     Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> verticalGradient(
         float topY, float bottomY, const D2D1_COLOR_F& topColor, const D2D1_COLOR_F& midColor,
@@ -41,6 +43,7 @@ public:
     Microsoft::WRL::ComPtr<IDWriteTextFormat> createFormat(float sizeDip, DWRITE_FONT_WEIGHT weight,
                                                            DWRITE_TEXT_ALIGNMENT align) const;
     Microsoft::WRL::ComPtr<ID2D1Bitmap> createIconBitmap(HICON icon);
+    Microsoft::WRL::ComPtr<ID2D1Bitmap> createBitmapFromHBitmap(HBITMAP bitmap);
 
     template <typename Paint>
     HRESULT draw(Paint&& paint) {

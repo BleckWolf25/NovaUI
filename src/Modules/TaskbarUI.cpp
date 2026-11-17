@@ -1,7 +1,7 @@
 /**
  * @file TaskbarUI.cpp
  *
- * @version 1.2.0
+ * @version 1.3.0
  * @author BleckWolf25
  * @license MIT
  *
@@ -35,25 +35,92 @@ constexpr float kSectionGap = 10.0f;
 constexpr float kDividerWidth = 1.0f;
 constexpr float kClockWidth = 92.0f;
 
-// Transparent Liquid Glass optical palette
-constexpr D2D1_COLOR_F kGlassBaseTint{0.05f, 0.065f, 0.09f, 0.08f};
-constexpr D2D1_COLOR_F kSheenTop{1.0f, 1.0f, 1.0f, 0.13f};
-constexpr D2D1_COLOR_F kSheenMid{1.0f, 1.0f, 1.0f, 0.02f};
-constexpr D2D1_COLOR_F kSheenBottom{0.78f, 0.86f, 1.0f, 0.04f};
+// Ultra-sheer blur-free glass palette
+constexpr D2D1_COLOR_F kGlassBaseTint{0.04f, 0.055f, 0.08f, 0.02f};
+constexpr D2D1_COLOR_F kSheenTop{1.0f, 1.0f, 1.0f, 0.045f};
+constexpr D2D1_COLOR_F kSheenMid{1.0f, 1.0f, 1.0f, 0.005f};
+constexpr D2D1_COLOR_F kSheenBottom{0.78f, 0.86f, 1.0f, 0.015f};
 
-constexpr D2D1_COLOR_F kTopSpecular{1.0f, 1.0f, 1.0f, 0.34f};
-constexpr D2D1_COLOR_F kInnerBevel{1.0f, 1.0f, 1.0f, 0.08f};
+constexpr D2D1_COLOR_F kTopSpecular{1.0f, 1.0f, 1.0f, 0.18f};
+constexpr D2D1_COLOR_F kInnerBevel{1.0f, 1.0f, 1.0f, 0.03f};
 
-constexpr D2D1_COLOR_F kLensHoverFill{1.0f, 1.0f, 1.0f, 0.11f};
-constexpr D2D1_COLOR_F kLensActiveFill{1.0f, 1.0f, 1.0f, 0.17f};
-constexpr D2D1_COLOR_F kLensRimTop{1.0f, 1.0f, 1.0f, 0.40f};
-constexpr D2D1_COLOR_F kLensRimMid{1.0f, 1.0f, 1.0f, 0.14f};
-constexpr D2D1_COLOR_F kLensRimBottom{1.0f, 1.0f, 1.0f, 0.10f};
+constexpr D2D1_COLOR_F kLensHoverFill{1.0f, 1.0f, 1.0f, 0.07f};
+constexpr D2D1_COLOR_F kLensActiveFill{1.0f, 1.0f, 1.0f, 0.11f};
+constexpr D2D1_COLOR_F kLensRimTop{1.0f, 1.0f, 1.0f, 0.26f};
+constexpr D2D1_COLOR_F kLensRimMid{1.0f, 1.0f, 1.0f, 0.09f};
+constexpr D2D1_COLOR_F kLensRimBottom{1.0f, 1.0f, 1.0f, 0.06f};
 
-constexpr D2D1_COLOR_F kAccent{0.56f, 0.72f, 1.0f, 1.0f};
-constexpr D2D1_COLOR_F kAccentGlow{0.56f, 0.72f, 1.0f, 0.35f};
-constexpr D2D1_COLOR_F kText{1.0f, 1.0f, 1.0f, 0.96f};
-constexpr D2D1_COLOR_F kMuted{1.0f, 1.0f, 1.0f, 0.64f};
+// Windows 11 Start emblem crystalline palette
+constexpr D2D1_COLOR_F kWinPaneTop{0.50f, 0.89f, 1.0f, 0.98f};
+constexpr D2D1_COLOR_F kWinPaneMid{0.31f, 0.75f, 0.98f, 0.96f};
+constexpr D2D1_COLOR_F kWinPaneBottom{0.17f, 0.60f, 0.94f, 0.96f};
+constexpr D2D1_COLOR_F kWinPaneHoverTop{0.64f, 0.94f, 1.0f, 1.0f};
+constexpr D2D1_COLOR_F kWinPaneHoverMid{0.42f, 0.82f, 1.0f, 0.98f};
+constexpr D2D1_COLOR_F kWinPaneHoverBottom{0.25f, 0.68f, 0.98f, 0.98f};
+
+constexpr D2D1_COLOR_F kAccent{0.46f, 0.78f, 1.0f, 1.0f};
+constexpr D2D1_COLOR_F kAccentGlow{0.46f, 0.78f, 1.0f, 0.30f};
+constexpr D2D1_COLOR_F kText{1.0f, 1.0f, 1.0f, 0.97f};
+constexpr D2D1_COLOR_F kTextShadow{0.0f, 0.0f, 0.0f, 0.45f};
+constexpr D2D1_COLOR_F kMuted{1.0f, 1.0f, 1.0f, 0.68f};
+
+// Builds a rectangle path where each corner can have an independent radius
+Microsoft::WRL::ComPtr<ID2D1PathGeometry> createAsymmetricRoundRect(
+    ID2D1Factory1* factory, const D2D1_RECT_F& r, float rTL, float rTR, float rBR, float rBL) {
+    if (!factory) {
+        return nullptr;
+    }
+
+    Microsoft::WRL::ComPtr<ID2D1PathGeometry> geometry;
+    if (FAILED(factory->CreatePathGeometry(geometry.GetAddressOf()))) {
+        return nullptr;
+    }
+
+    Microsoft::WRL::ComPtr<ID2D1GeometrySink> sink;
+    if (FAILED(geometry->Open(sink.GetAddressOf()))) {
+        return nullptr;
+    }
+
+    sink->BeginFigure(D2D1::Point2F(r.left + rTL, r.top), D2D1_FIGURE_BEGIN_FILLED);
+
+    // Top edge -> Top-Right arc
+    sink->AddLine(D2D1::Point2F(r.right - rTR, r.top));
+    if (rTR > 0.0f) {
+        sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(r.right, r.top + rTR), D2D1::SizeF(rTR, rTR),
+                                      0.0f, D2D1_SWEEP_DIRECTION_CLOCKWISE,
+                                      D2D1_ARC_SIZE_SMALL));
+    }
+
+    // Right edge -> Bottom-Right arc
+    sink->AddLine(D2D1::Point2F(r.right, r.bottom - rBR));
+    if (rBR > 0.0f) {
+        sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(r.right - rBR, r.bottom),
+                                      D2D1::SizeF(rBR, rBR), 0.0f, D2D1_SWEEP_DIRECTION_CLOCKWISE,
+                                      D2D1_ARC_SIZE_SMALL));
+    }
+
+    // Bottom edge -> Bottom-Left arc
+    sink->AddLine(D2D1::Point2F(r.left + rBL, r.bottom));
+    if (rBL > 0.0f) {
+        sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(r.left, r.bottom - rBL), D2D1::SizeF(rBL, rBL),
+                                      0.0f, D2D1_SWEEP_DIRECTION_CLOCKWISE,
+                                      D2D1_ARC_SIZE_SMALL));
+    }
+
+    // Left edge -> Top-Left arc
+    sink->AddLine(D2D1::Point2F(r.left, r.top + rTL));
+    if (rTL > 0.0f) {
+        sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(r.left + rTL, r.top), D2D1::SizeF(rTL, rTL),
+                                      0.0f, D2D1_SWEEP_DIRECTION_CLOCKWISE,
+                                      D2D1_ARC_SIZE_SMALL));
+    }
+
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    if (FAILED(sink->Close())) {
+        return nullptr;
+    }
+    return geometry;
+}
 }
 
 // ---------- IMPLEMENTATION
@@ -94,6 +161,9 @@ bool TaskbarUI::start() {
         m_hwnd,
         [this](HICON icon) -> Microsoft::WRL::ComPtr<ID2D1Bitmap> {
             return m_renderer.createIconBitmap(icon);
+        },
+        [this](HBITMAP bitmap) -> Microsoft::WRL::ComPtr<ID2D1Bitmap> {
+            return m_renderer.createBitmapFromHBitmap(bitmap);
         },
         [this]() {
             if (m_hwnd) {
@@ -151,6 +221,9 @@ LRESULT TaskbarUI::onMessage(UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == ABN_POSCHANGED) {
             dock();
         }
+        return 0;
+    case TaskTracker::kMsgPinsChanged:
+        m_tasks.reloadPinnedApps();
         return 0;
     case WM_DESTROY:
         m_tasks.stop();
@@ -241,7 +314,7 @@ void TaskbarUI::onLeftClick(int xPx, int yPx) {
         break;
     case HitZone::App:
         if (hit.index >= 0 && hit.index < static_cast<int>(m_tasks.items().size())) {
-            m_tasks.toggleWindow(m_tasks.items()[static_cast<size_t>(hit.index)].hwnd);
+            m_tasks.activateOrLaunch(m_tasks.items()[static_cast<size_t>(hit.index)]);
         }
         break;
     case HitZone::Clock:
@@ -257,7 +330,7 @@ void TaskbarUI::onMiddleClick(int xPx, int yPx) {
     const HitResult hit = hitTest(static_cast<float>(xPx) / scale, static_cast<float>(yPx) / scale);
     if (hit.zone == HitZone::App && hit.index >= 0 &&
         hit.index < static_cast<int>(m_tasks.items().size())) {
-        m_tasks.closeWindow(m_tasks.items()[static_cast<size_t>(hit.index)].hwnd);
+        m_tasks.middleClickItem(m_tasks.items()[static_cast<size_t>(hit.index)]);
     }
 }
 
@@ -269,14 +342,14 @@ void TaskbarUI::paint() {
         const D2D1_SIZE_F size = dc.GetSize();
         const D2D1_RECT_F fullRect = D2D1::RectF(0.0f, 0.0f, size.width, size.height);
 
-        // 1. Ultra-clear Liquid Glass tint + vertical specular sheen
+        // 1. Ultra-sheer blur-free glass tint + faint vertical specular sheen
         dc.FillRectangle(fullRect, m_renderer.brush(kGlassBaseTint));
         if (auto sheenBrush = m_renderer.verticalGradient(0.0f, size.height, kSheenTop, kSheenMid,
                                                           0.42f, kSheenBottom)) {
             dc.FillRectangle(fullRect, sheenBrush.Get());
         }
 
-        // 2. Luminous top specular glass rim + inner thickness bevel
+        // 2. Delicate top specular glass rim + inner thickness bevel
         dc.FillRectangle(D2D1::RectF(0.0f, 0.0f, size.width, 1.0f),
                          m_renderer.brush(kTopSpecular));
         dc.FillRectangle(D2D1::RectF(0.0f, 1.0f, size.width, 2.0f),
@@ -299,34 +372,56 @@ void TaskbarUI::paint() {
 
         const auto drawGlassDivider = [&](float divX) {
             if (auto divBrush = m_renderer.verticalGradient(
-                    10.0f, size.height - 10.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.02f),
-                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.22f), 0.5f,
-                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.02f))) {
+                    10.0f, size.height - 10.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.01f),
+                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f), 0.5f,
+                    D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.01f))) {
                 dc.FillRectangle(D2D1::RectF(divX, 10.0f, divX + kDividerWidth, size.height - 10.0f),
                                  divBrush.Get());
             }
         };
 
-        // 3. Start Prism Lens
+        // 3. Sculpted Windows 11 Start Emblem
         float x = kOuterPadX;
         const D2D1_RECT_F startRect = D2D1::RectF(x, slotTop, x + kSlotSize, slotTop + kSlotSize);
-        drawGlassLens(startRect, false, m_hover.zone == HitZone::Start);
+        const bool startHovered = (m_hover.zone == HitZone::Start);
+        drawGlassLens(startRect, false, startHovered);
 
         const float cx = (startRect.left + startRect.right) / 2.0f;
         const float cy = (startRect.top + startRect.bottom) / 2.0f;
-        const float tile = 5.2f;
-        const float gap = 1.8f;
+        const float pane = 8.0f;
+        const float gap = 0.75f; // 1.5 DIP total crosshair seam
+        const float outerR = 2.2f;
+        const float innerR = 0.4f;
+
         const D2D1_RECT_F panes[4]{
-            D2D1::RectF(cx - gap - tile, cy - gap - tile, cx - gap, cy - gap),
-            D2D1::RectF(cx + gap, cy - gap - tile, cx + gap + tile, cy - gap),
-            D2D1::RectF(cx - gap - tile, cy + gap, cx - gap, cy + gap + tile),
-            D2D1::RectF(cx + gap, cy + gap, cx + gap + tile, cy + gap + tile),
+            D2D1::RectF(cx - gap - pane, cy - gap - pane, cx - gap, cy - gap), // Top-Left
+            D2D1::RectF(cx + gap, cy - gap - pane, cx + gap + pane, cy - gap), // Top-Right
+            D2D1::RectF(cx - gap - pane, cy + gap, cx - gap, cy + gap + pane), // Bottom-Left
+            D2D1::RectF(cx + gap, cy + gap, cx + gap + pane, cy + gap + pane), // Bottom-Right
         };
+        const float corners[4][4]{
+            {outerR, innerR, innerR, innerR},
+            {innerR, outerR, innerR, innerR},
+            {innerR, innerR, innerR, outerR},
+            {innerR, innerR, outerR, innerR},
+        };
+
+        auto winGradient = m_renderer.verticalGradient(
+            cy - gap - pane, cy + gap + pane, startHovered ? kWinPaneHoverTop : kWinPaneTop,
+            startHovered ? kWinPaneHoverMid : kWinPaneMid, 0.48f,
+            startHovered ? kWinPaneHoverBottom : kWinPaneBottom);
+
         for (int p = 0; p < 4; ++p) {
-            const D2D1_COLOR_F paneColor =
-                (p == 0) ? kAccent : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.90f);
-            dc.FillRoundedRectangle(D2D1::RoundedRect(panes[p], 1.6f, 1.6f),
-                                    m_renderer.brush(paneColor));
+            auto geo = createAsymmetricRoundRect(m_renderer.factory(), panes[p], corners[p][0],
+                                                 corners[p][1], corners[p][2], corners[p][3]);
+            if (geo) {
+                ID2D1Brush* fillBrush =
+                    winGradient ? static_cast<ID2D1Brush*>(winGradient.Get())
+                                : static_cast<ID2D1Brush*>(m_renderer.brush(kWinPaneMid));
+                dc.FillGeometry(geo.Get(), fillBrush);
+                dc.DrawGeometry(geo.Get(),
+                                m_renderer.brush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.24f)), 0.5f);
+            }
         }
 
         // Left glass divider
@@ -334,7 +429,7 @@ void TaskbarUI::paint() {
         drawGlassDivider(x);
         x += kDividerWidth + kSectionGap;
 
-        // 4. Running application icons inside Liquid Glass lenses
+        // 4. Pinned & Running application icons inside Liquid Glass lenses
         const auto& items = m_tasks.items();
         const float maxAppX = size.width - kOuterPadX - kClockWidth - kSectionGap -
                               kDividerWidth - kSectionGap - kSlotSize;
@@ -355,23 +450,27 @@ void TaskbarUI::paint() {
                     D2D1::RectF(x + iconOffset, slotTop + iconOffset - 0.5f,
                                 x + iconOffset + kIconSize,
                                 slotTop + iconOffset + kIconSize - 0.5f);
-                dc.DrawBitmap(item.icon.Get(), iconRect, 1.0f,
+                const float iconOpacity = (item.running || hovered) ? 1.0f : 0.92f;
+                dc.DrawBitmap(item.icon.Get(), iconRect, iconOpacity,
                               D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
             }
 
-            // Luminous active/open indicator capsule
-            const float pillWidth = item.active ? 12.0f : 4.0f;
-            const float pillX = x + (kSlotSize - pillWidth) / 2.0f;
-            if (item.active) {
-                const D2D1_RECT_F glowRect = D2D1::RectF(
-                    pillX - 2.0f, size.height - 5.5f, pillX + pillWidth + 2.0f, size.height - 1.5f);
-                dc.FillRoundedRectangle(D2D1::RoundedRect(glowRect, 2.0f, 2.0f),
-                                        m_renderer.brush(kAccentGlow));
+            // Luminous active/open indicator capsule (hidden for unlaunched pinned apps)
+            if (item.running) {
+                const float pillWidth = item.active ? 12.0f : 4.5f;
+                const float pillX = x + (kSlotSize - pillWidth) / 2.0f;
+                if (item.active) {
+                    const D2D1_RECT_F glowRect =
+                        D2D1::RectF(pillX - 2.0f, size.height - 5.5f, pillX + pillWidth + 2.0f,
+                                    size.height - 1.5f);
+                    dc.FillRoundedRectangle(D2D1::RoundedRect(glowRect, 2.0f, 2.0f),
+                                            m_renderer.brush(kAccentGlow));
+                }
+                const D2D1_RECT_F pillRect =
+                    D2D1::RectF(pillX, size.height - 4.5f, pillX + pillWidth, size.height - 2.5f);
+                dc.FillRoundedRectangle(D2D1::RoundedRect(pillRect, 1.0f, 1.0f),
+                                        m_renderer.brush(item.active ? kAccent : kMuted));
             }
-            const D2D1_RECT_F pillRect =
-                D2D1::RectF(pillX, size.height - 4.5f, pillX + pillWidth, size.height - 2.5f);
-            dc.FillRoundedRectangle(D2D1::RoundedRect(pillRect, 1.0f, 1.0f),
-                                    m_renderer.brush(item.active ? kAccent : kMuted));
 
             x += kSlotSize + kSlotGap;
         }
@@ -389,6 +488,14 @@ void TaskbarUI::paint() {
 
         const D2D1_RECT_F timeRect = D2D1::RectF(clockLeft, 6.0f, clockRight, 24.0f);
         const D2D1_RECT_F dateRect = D2D1::RectF(clockLeft, 23.0f, clockRight, 39.0f);
+        const D2D1_RECT_F timeShadowRect = D2D1::RectF(clockLeft, 7.0f, clockRight, 25.0f);
+        const D2D1_RECT_F dateShadowRect = D2D1::RectF(clockLeft, 24.0f, clockRight, 40.0f);
+
+        dc.DrawText(m_clock.time().c_str(), static_cast<UINT32>(m_clock.time().size()),
+                    m_timeFormat.Get(), timeShadowRect, m_renderer.brush(kTextShadow));
+        dc.DrawText(m_clock.date().c_str(), static_cast<UINT32>(m_clock.date().size()),
+                    m_dateFormat.Get(), dateShadowRect, m_renderer.brush(kTextShadow));
+
         dc.DrawText(m_clock.time().c_str(), static_cast<UINT32>(m_clock.time().size()),
                     m_timeFormat.Get(), timeRect, m_renderer.brush(kText));
         dc.DrawText(m_clock.date().c_str(), static_cast<UINT32>(m_clock.date().size()),

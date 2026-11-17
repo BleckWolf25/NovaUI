@@ -24,25 +24,6 @@
 namespace {
 constexpr auto kDwmBorderColorAttr = static_cast<DWMWINDOWATTRIBUTE>(34);
 constexpr COLORREF kDwmColorNone = 0xFFFFFFFEu;
-
-enum class WindowCompositionAttribute : DWORD {
-    AccentPolicy = 19,
-};
-
-struct AccentPolicy {
-    DWORD accentState;
-    DWORD accentFlags;
-    DWORD gradientColor;
-    DWORD animationId;
-};
-
-struct WindowCompositionAttribData {
-    WindowCompositionAttribute attribute;
-    void* data;
-    SIZE_T sizeOfData;
-};
-
-constexpr DWORD kLiquidGlassAcrylicTint = 0x0414100Cu;
 }
 
 // ---------- IMPLEMENTATION
@@ -70,18 +51,6 @@ void Window::applyBackdrop() const {
     DwmSetWindowAttribute(m_hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corners, sizeof(corners));
     DwmSetWindowAttribute(m_hwnd, kDwmBorderColorAttr, &kDwmColorNone, sizeof(kDwmColorNone));
     DwmExtendFrameIntoClientArea(m_hwnd, &margins);
-
-    using SetWindowCompositionAttributeFn = BOOL(WINAPI*)(HWND, WindowCompositionAttribData*);
-    if (HMODULE user32 = GetModuleHandleW(L"user32.dll")) {
-        void* rawProc =
-            reinterpret_cast<void*>(GetProcAddress(user32, "SetWindowCompositionAttribute"));
-        if (rawProc) {
-            auto setCompositionAttribute =
-                reinterpret_cast<SetWindowCompositionAttributeFn>(rawProc);
-            WindowCompositionAttribData data{WindowCompositionAttribute::AccentPolicy};
-            setCompositionAttribute(m_hwnd, &data);
-        }
-    }
 }
 
 LRESULT Window::onMessage(UINT msg, WPARAM wp, LPARAM lp) {

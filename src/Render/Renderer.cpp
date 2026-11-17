@@ -1,7 +1,7 @@
 /**
  * @file Renderer.cpp
  *
- * @version 1.2.0
+ * @version 1.3.0
  * @author BleckWolf25
  * @license MIT
  *
@@ -130,6 +130,33 @@ Microsoft::WRL::ComPtr<ID2D1Bitmap> Renderer::createIconBitmap(HICON icon) {
     Microsoft::WRL::ComPtr<ID2D1Bitmap> bitmap;
     m_d2dContext->CreateBitmapFromWicBitmap(converter.Get(), nullptr, bitmap.GetAddressOf());
     return bitmap;
+}
+
+Microsoft::WRL::ComPtr<ID2D1Bitmap> Renderer::createBitmapFromHBitmap(HBITMAP bitmap) {
+    if (!bitmap || !m_wicFactory || FAILED(ensureDevice())) {
+        return nullptr;
+    }
+
+    Microsoft::WRL::ComPtr<IWICBitmap> wicBitmap;
+    if (FAILED(m_wicFactory->CreateBitmapFromHBITMAP(bitmap, nullptr, WICBitmapUseAlpha,
+                                                     wicBitmap.GetAddressOf()))) {
+        return nullptr;
+    }
+
+    Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
+    if (FAILED(m_wicFactory->CreateFormatConverter(converter.GetAddressOf()))) {
+        return nullptr;
+    }
+
+    if (FAILED(converter->Initialize(wicBitmap.Get(), GUID_WICPixelFormat32bppPBGRA,
+                                     WICBitmapDitherTypeNone, nullptr, 0.0,
+                                     WICBitmapPaletteTypeCustom))) {
+        return nullptr;
+    }
+
+    Microsoft::WRL::ComPtr<ID2D1Bitmap> d2dBitmap;
+    m_d2dContext->CreateBitmapFromWicBitmap(converter.Get(), nullptr, d2dBitmap.GetAddressOf());
+    return d2dBitmap;
 }
 
 HRESULT Renderer::ensureDevice() {

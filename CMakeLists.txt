@@ -1,7 +1,7 @@
 # ------------------------------------------------------------
 # @file CMakeLists.txt
 #
-# @version 1.0.0
+# @version 1.1.0
 # @author BleckWolf25
 # @license MIT
 #
@@ -52,6 +52,8 @@ target_link_libraries(NovaUI PRIVATE
   dwmapi
   windowscodecs
   shell32
+  propsys
+  uuid
   user32
   ole32
 )
