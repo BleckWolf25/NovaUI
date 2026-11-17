@@ -1,19 +1,19 @@
 /**
-- @file TaskbarUI.h
+ * @file TaskbarUI.h
  *
-- @version 1.1.0
-- @author BleckWolf25
-- @license MIT
+ * @version 1.2.0
+ * @author BleckWolf25
+ * @license MIT
  *
-- @summary Bottom-docked glass taskbar replacing the native Windows shell bar
+ * @summary Floating Liquid Glass dock replacing the native Windows taskbar
  *
-- @description
-- Suppresses Explorer's taskbar, reserves the bottom screen edge via AppBar, renders a sleek
-- translucent glass bar with DirectComposition and handles interactive hover and click events
-- for the Start launcher, running windows and minute-aligned clock.
+ * @description
+ * Suppresses Explorer's taskbar, reserves the bottom screen edge via AppBar, and renders a
+ * centered floating stadium-pill dock with multi-layered Liquid Glass specular highlights,
+ * Fresnel rim gradients, interactive app lenses and a clickable clock cluster.
  *
-- @since 17/11/2026
-- @updated 17/11/2026
+ * @since 17/11/2026
+ * @updated 17/11/2026
  */
 #pragma once
 // ---------- IMPORTS
@@ -34,11 +34,26 @@ protected:
     LRESULT onMessage(UINT msg, WPARAM wp, LPARAM lp) override;
 
 private:
+    enum class HitZone { None, Start, App, Clock };
+
+    struct HitResult {
+        HitZone zone = HitZone::None;
+        int index = -1;
+
+        bool operator==(const HitResult& other) const noexcept {
+            return zone == other.zone && index == other.index;
+        }
+        bool operator!=(const HitResult& other) const noexcept {
+            return !(*this == other);
+        }
+    };
+
     void dock();
-    void paint();
-    int hitTestSlot(float dipX, float dipY) const;
+    HitResult hitTest(float dipX, float dipY) const;
     void onMouseMove(int xPx, int yPx);
-    void onClick(int xPx, int yPx);
+    void onLeftClick(int xPx, int yPx);
+    void onMiddleClick(int xPx, int yPx);
+    void paint();
 
     ShellTaskbar m_shellTaskbar;
     AppBar m_appBar;
@@ -46,10 +61,10 @@ private:
     TaskTracker m_tasks;
     ClockWidget m_clock;
 
-    Microsoft::WRL::ComPtr<IDWriteTextFormat> m_glyphFormat;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_timeFormat;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_dateFormat;
 
-    int m_hoverSlot = -2; // -2: none, -1: Start button, >= 0: task index
+    float m_barWidthDip = 0.0f;
+    HitResult m_hover{};
     bool m_trackingMouse = false;
 };

@@ -1,18 +1,18 @@
 /**
-- @file main.cpp
+ * @file main.cpp
  *
-- @version 1.1.0
-- @author BleckWolf25
-- @license MIT
+ * @version 1.1.0
+ * @author BleckWolf25
+ * @license MIT
  *
-- @summary NovaUI entry point and blocking Win32 message loop
+ * @summary NovaUI entry point and blocking Win32 message loop
  *
-- @description
-- Enables per-monitor DPI awareness, initializes apartment-threaded COM for WIC icon decoding,
-- starts the replacement taskbar and blocks in GetMessageW for 0% idle CPU usage.
+ * @description
+ * Enables per-monitor DPI awareness, initializes apartment-threaded COM for WIC icon decoding,
+ * starts the replacement taskbar and blocks in GetMessageW for 0% idle CPU usage.
  *
-- @since 17/11/2026
-- @updated 17/11/2026
+ * @since 17/11/2026
+ * @updated 17/11/2026
  */
 // ---------- IMPORTS
 #include <Windows.h>

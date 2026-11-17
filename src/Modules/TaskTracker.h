@@ -1,19 +1,19 @@
 /**
-- @file TaskTracker.h
+ * @file TaskTracker.h
  *
-- @version 1.0.0
-- @author BleckWolf25
-- @license MIT
+ * @version 1.1.1
+ * @author BleckWolf25
+ * @license MIT
  *
-- @summary Event-driven open window and foreground application tracker
+ * @summary Event-driven open window and foreground application tracker
  *
-- @description
-- Enumerates top-level desktop windows, filters out tool windows and DWM-cloaked UWP frames,
-- extracts application icons and listens to WinEvent hooks for window creation, destruction,
-- cloaking and foreground changes without polling.
+ * @description
+ * Enumerates top-level desktop windows, preserves stable slot order across focus switches,
+ * extracts high-DPI application icons with executable fallback and listens to WinEvent hooks
+ * without polling.
  *
-- @since 17/11/2026
-- @updated 17/11/2026
+ * @since 17/11/2026
+ * @updated 17/11/2026
  */
 #pragma once
 // ---------- IMPORTS
@@ -45,12 +45,13 @@ public:
     void stop();
     void refresh();
     void toggleWindow(HWND target) const;
+    void closeWindow(HWND target) const;
 
     const std::vector<TaskItem>& items() const noexcept { return m_items; }
 
 private:
     static bool isTaskbarWindow(HWND hwnd, HWND selfHwnd);
-    static HICON resolveIcon(HWND hwnd);
+    Microsoft::WRL::ComPtr<ID2D1Bitmap> loadIconForWindow(HWND hwnd) const;
     static BOOL CALLBACK enumWindowsProc(HWND hwnd, LPARAM lp);
     static void CALLBACK onWinEvent(HWINEVENTHOOK hook, DWORD event, HWND hwnd, LONG idObject,
                                     LONG idChild, DWORD eventThread, DWORD eventTime);

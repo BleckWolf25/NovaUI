@@ -1,19 +1,19 @@
 /**
 - @file ShellTaskbar.h
  *
-- @version 1.0.0
-- @author BleckWolf25
-- @license MIT
+ * @version 1.1.1
+ * @author BleckWolf25
+ * @license MIT
  *
-- @summary Suppresses and restores the native Windows Explorer taskbar
+ * @summary Suppresses and restores the native Windows Explorer taskbar
  *
-- @description
-- Hides Shell_TrayWnd and Shell_SecondaryTrayWnd, switches Explorer's AppBar state to auto-hide
-- so the desktop work area is surrendered to NovaUI, and installs a zero-polling WinEvent hook
-- to keep Explorer from re-showing its taskbar until NovaUI exits.
+ * @description
+ * Hides Shell_TrayWnd and Shell_SecondaryTrayWnd, switches Explorer's AppBar state to auto-hide
+ * so the desktop work area is surrendered to NovaUI, and installs a zero-polling WinEvent hook
+ * to keep Explorer from re-showing its taskbar until NovaUI exits.
  *
-- @since 17/11/2026
-- @updated 17/11/2026
+ * @since 17/11/2026
+ * @updated 17/11/2026
  */
 #pragma once
 // ---------- IMPORTS
@@ -31,6 +31,7 @@ public:
     void suppress();
     void restore();
     static void openStartMenu();
+    static void openNotificationCenter();
 
 private:
     static void hideAllTrays();

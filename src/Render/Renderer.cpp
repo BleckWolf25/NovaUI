@@ -1,23 +1,21 @@
 /**
-- @file Renderer.cpp
+ * @file Renderer.cpp
  *
-- @version 1.1.0
-- @author BleckWolf25
-- @license MIT
+ * @version 1.2.0
+ * @author BleckWolf25
+ * @license MIT
  *
-- @summary Implementation of the DirectComposition and Direct2D render context
+ * @summary Implementation of the DirectComposition and Direct2D render context
  *
-- @description
-- Builds a D3D11 device, Direct2D device context, premultiplied-alpha composition swap chain
-- and DirectComposition visual tree. Resizing recreates the swap chain target buffer in place.
+ * @description
+ * Builds a D3D11 device, Direct2D device context, premultiplied-alpha composition swap chain
+ * and DirectComposition visual tree, plus multi-stop gradient helpers for Liquid Glass optics.
  *
-- @since 17/11/2026
-- @updated 17/11/2026
+ * @since 17/11/2026
+ * @updated 17/11/2026
  */
 // ---------- IMPORTS
 #include "Render/Renderer.h"
-
-#include <algorithm>
 
 // ---------- CONSTANTS
 namespace {
@@ -68,6 +66,31 @@ ID2D1SolidColorBrush* Renderer::brush(const D2D1_COLOR_F& color) {
     return m_brush.Get();
 }
 
+Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> Renderer::verticalGradient(
+    float topY, float bottomY, const D2D1_COLOR_F& topColor, const D2D1_COLOR_F& midColor,
+    float midStop, const D2D1_COLOR_F& bottomColor) const {
+    if (!m_d2dContext) {
+        return nullptr;
+    }
+
+    const D2D1_GRADIENT_STOP stops[3]{
+        {0.0f, topColor},
+        {midStop, midColor},
+        {1.0f, bottomColor},
+    };
+
+    Microsoft::WRL::ComPtr<ID2D1GradientStopCollection> stopCollection;
+    if (FAILED(m_d2dContext->CreateGradientStopCollection(stops, 3, stopCollection.GetAddressOf()))) {
+        return nullptr;
+    }
+
+    Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> gradient;
+    const auto props = D2D1::LinearGradientBrushProperties(D2D1::Point2F(0.0f, topY),
+                                                           D2D1::Point2F(0.0f, bottomY));
+    m_d2dContext->CreateLinearGradientBrush(props, stopCollection.Get(), gradient.GetAddressOf());
+    return gradient;
+}
+
 Microsoft::WRL::ComPtr<IDWriteTextFormat> Renderer::createFormat(float sizeDip,
                                                                  DWRITE_FONT_WEIGHT weight,
                                                                  DWRITE_TEXT_ALIGNMENT align) const {
@@ -114,7 +137,7 @@ HRESULT Renderer::ensureDevice() {
         return S_OK;
     }
 
-    UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+    const UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
     HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, nullptr, 0,
                                    D3D11_SDK_VERSION, m_d3dDevice.GetAddressOf(), nullptr, nullptr);
     if (FAILED(hr)) {
@@ -161,12 +184,8 @@ HRESULT Renderer::ensureDevice() {
 
     RECT rc{};
     GetClientRect(m_hwnd, &rc);
-    const UINT width = rc.right > rc.left
-                           ? static_cast<UINT>(rc.right - rc.left)
-                           : 1u;
-    const UINT height = rc.bottom > rc.top
-                            ? static_cast<UINT>(rc.bottom - rc.top)
-                            : 1u;
+    const UINT width = rc.right > rc.left ? static_cast<UINT>(rc.right - rc.left) : 1u;
+    const UINT height = rc.bottom > rc.top ? static_cast<UINT>(rc.bottom - rc.top) : 1u;
 
     DXGI_SWAP_CHAIN_DESC1 desc{};
     desc.Width = width;

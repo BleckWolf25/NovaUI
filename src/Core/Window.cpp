@@ -1,7 +1,7 @@
 /**
  * @file Window.cpp
  *
- * @version 1.0.0
+ * @version 1.1.0
  * @author BleckWolf25
  * @license MIT
  *
@@ -10,7 +10,7 @@
  * @description
  * Binds the HWND to its owning Window instance during WM_NCCREATE, dispatches messages to
  * onMessage inside a try/catch so no exception reaches the OS, and unbinds on WM_NCDESTROY.
- * The window class is registered once per class name.
+ * applyBackdrop enables borderless dark Acrylic translucency for Liquid Glass compositing.
  *
  * @since 17/11/2026
  * @updated 17/11/2026
@@ -19,6 +19,33 @@
 #include "Core/Window.h"
 
 #include <dwmapi.h>
+
+// ---------- CONSTANTS
+namespace {
+constexpr auto kDwmBorderColorAttr = static_cast<DWMWINDOWATTRIBUTE>(34);
+constexpr COLORREF kDwmColorNone = 0xFFFFFFFEu;
+
+enum class WindowCompositionAttribute : DWORD {
+    AccentPolicy = 19,
+};
+
+struct AccentPolicy {
+    DWORD accentState;
+    DWORD accentFlags;
+    DWORD gradientColor; // AABBGGRR
+    DWORD animationId;
+};
+
+struct WindowCompositionAttribData {
+    WindowCompositionAttribute attribute;
+    void* data;
+    SIZE_T sizeOfData;
+};
+
+constexpr DWORD kAccentEnableAcrylicBlurBehind = 4u;
+// Ultra-sheer dark tint (~6% alpha in AABBGGRR) so background content shines through clearly
+constexpr DWORD kLiquidGlassAcrylicTint = 0x1014100Cu;
+}
 
 // ---------- IMPLEMENTATION
 bool Window::create(const wchar_t* className, DWORD style, DWORD exStyle) {
@@ -39,13 +66,26 @@ bool Window::create(const wchar_t* className, DWORD style, DWORD exStyle) {
 void Window::applyBackdrop() const {
     const BOOL dark = TRUE;
     const DWORD corners = DWMWCP_DONOTROUND;
-    const DWORD backdrop = DWMSBT_TRANSIENTWINDOW;
     const MARGINS margins{-1, -1, -1, -1};
 
     DwmSetWindowAttribute(m_hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
     DwmSetWindowAttribute(m_hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corners, sizeof(corners));
-    DwmSetWindowAttribute(m_hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
+    DwmSetWindowAttribute(m_hwnd, kDwmBorderColorAttr, &kDwmColorNone, sizeof(kDwmColorNone));
     DwmExtendFrameIntoClientArea(m_hwnd, &margins);
+
+    using SetWindowCompositionAttributeFn = BOOL(WINAPI*)(HWND, WindowCompositionAttribData*);
+    if (HMODULE user32 = GetModuleHandleW(L"user32.dll")) {
+        void* rawProc =
+            reinterpret_cast<void*>(GetProcAddress(user32, "SetWindowCompositionAttribute"));
+        if (rawProc) {
+            auto setCompositionAttribute =
+                reinterpret_cast<SetWindowCompositionAttributeFn>(rawProc);
+            AccentPolicy policy{kAccentEnableAcrylicBlurBehind, 0u, kLiquidGlassAcrylicTint, 0u};
+            WindowCompositionAttribData data{WindowCompositionAttribute::AccentPolicy, &policy,
+                                             sizeof(policy)};
+            setCompositionAttribute(m_hwnd, &data);
+        }
+    }
 }
 
 LRESULT Window::onMessage(UINT msg, WPARAM wp, LPARAM lp) {

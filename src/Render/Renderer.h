@@ -1,19 +1,19 @@
 /**
-- @file Renderer.h
+ * @file Renderer.h
  *
-- @version 1.1.0
-- @author BleckWolf25
-- @license MIT
+ * @version 1.2.0
+ * @author BleckWolf25
+ * @license MIT
  *
-- @summary Direct3D 11, DirectComposition and Direct2D per-pixel-alpha render context
+ * @summary Direct3D 11, DirectComposition and Direct2D per-pixel-alpha render context
  *
-- @description
-- Renders into a DXGI_ALPHA_MODE_PREMULTIPLIED composition swap chain bound to the window via
-- DirectComposition so DWM Acrylic shows through with true per-pixel alpha and zero black-halo
-- artifacts. Also converts Win32 HICON handles into hardware Direct2D bitmaps via WIC.
+ * @description
+ * Renders into a DXGI_ALPHA_MODE_PREMULTIPLIED composition swap chain bound to the window via
+ * DirectComposition. Exposes ID2D1DeviceContext, multi-stop vertical gradient brushes for
+ * Liquid Glass specular highlights and Fresnel rims, and WIC high-DPI icon conversion.
  *
-- @since 17/11/2026
-- @updated 17/11/2026
+ * @since 17/11/2026
+ * @updated 17/11/2026
  */
 #pragma once
 // ---------- IMPORTS
@@ -34,6 +34,10 @@ public:
     void setDpi(float dpi);
 
     ID2D1SolidColorBrush* brush(const D2D1_COLOR_F& color);
+    Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> verticalGradient(
+        float topY, float bottomY, const D2D1_COLOR_F& topColor, const D2D1_COLOR_F& midColor,
+        float midStop, const D2D1_COLOR_F& bottomColor) const;
+
     Microsoft::WRL::ComPtr<IDWriteTextFormat> createFormat(float sizeDip, DWRITE_FONT_WEIGHT weight,
                                                            DWRITE_TEXT_ALIGNMENT align) const;
     Microsoft::WRL::ComPtr<ID2D1Bitmap> createIconBitmap(HICON icon);

@@ -1,23 +1,24 @@
 /**
-- @file TaskTracker.cpp
+ * @file TaskTracker.cpp
  *
-- @version 1.0.0
-- @author BleckWolf25
-- @license MIT
+ * @version 1.1.0
+ * @author BleckWolf25
+ * @license MIT
  *
-- @summary Implementation of the event-driven window list and activation switcher
+ * @summary Implementation of the event-driven window list and activation switcher
  *
-- @description
-- Maintains a cached list of visible top-level windows and their Direct2D icon bitmaps.
-- Rebuilds only when the shell fires window lifecycle or foreground WinEvents.
+ * @description
+ * Maintains a stable-ordered list of visible top-level windows and their Direct2D icon bitmaps.
+ * Rebuilds only when the shell fires window lifecycle or foreground WinEvents.
  *
-- @since 17/11/2026
-- @updated 17/11/2026
+ * @since 17/11/2026
+ * @updated 17/11/2026
  */
 // ---------- IMPORTS
 #include "Modules/TaskTracker.h"
 
 #include <dwmapi.h>
+#include <shellapi.h>
 #include <algorithm>
 #include <utility>
 
@@ -70,18 +71,33 @@ void TaskTracker::refresh() {
     std::vector<TaskItem> oldItems = std::move(m_items);
     m_items.clear();
 
-    EnumWindows(&TaskTracker::enumWindowsProc, reinterpret_cast<LPARAM>(this));
+    std::vector<TaskItem> discovered;
+    struct EnumCtx {
+        HWND selfHwnd;
+        std::vector<TaskItem>* out;
+    } ctx{m_selfHwnd, &discovered};
+
+    EnumWindows(&TaskTracker::enumWindowsProc, reinterpret_cast<LPARAM>(&ctx));
+
+    // Keep existing windows in their original slot order so icons never shuffle on focus
+    for (auto& old : oldItems) {
+        auto it = std::find_if(discovered.begin(), discovered.end(),
+                               [&](const TaskItem& d) { return d.hwnd == old.hwnd; });
+        if (it != discovered.end()) {
+            old.title = std::move(it->title);
+            m_items.push_back(std::move(old));
+            discovered.erase(it);
+        }
+    }
+    for (auto& fresh : discovered) {
+        m_items.push_back(std::move(fresh));
+    }
 
     const HWND foreground = GetForegroundWindow();
     for (auto& item : m_items) {
         item.active = (item.hwnd == foreground);
-
-        auto prev = std::find_if(oldItems.begin(), oldItems.end(),
-                                 [&](const TaskItem& old) { return old.hwnd == item.hwnd; });
-        if (prev != oldItems.end() && prev->icon) {
-            item.icon = prev->icon;
-        } else if (m_iconLoader) {
-            item.icon = m_iconLoader(resolveIcon(item.hwnd));
+        if (!item.icon) {
+            item.icon = loadIconForWindow(item.hwnd);
         }
     }
 
@@ -102,6 +118,12 @@ void TaskTracker::toggleWindow(HWND target) const {
         ShowWindowAsync(target, SW_RESTORE);
     }
     SetForegroundWindow(target);
+}
+
+void TaskTracker::closeWindow(HWND target) const {
+    if (IsWindow(target)) {
+        PostMessageW(target, WM_CLOSE, 0, 0);
+    }
 }
 
 bool TaskTracker::isTaskbarWindow(HWND hwnd, HWND selfHwnd) {
@@ -125,29 +147,61 @@ bool TaskTracker::isTaskbarWindow(HWND hwnd, HWND selfHwnd) {
     return GetWindowTextLengthW(hwnd) > 0;
 }
 
-HICON TaskTracker::resolveIcon(HWND hwnd) {
+Microsoft::WRL::ComPtr<ID2D1Bitmap> TaskTracker::loadIconForWindow(HWND hwnd) const {
+    if (!m_iconLoader) {
+        return nullptr;
+    }
+
     HICON icon = nullptr;
     SendMessageTimeoutW(hwnd, WM_GETICON, ICON_BIG, 0, SMTO_ABORTIFHUNG, 50,
                         reinterpret_cast<PDWORD_PTR>(&icon));
+    if (!icon) {
+        icon = reinterpret_cast<HICON>(GetClassLongPtrW(hwnd, GCLP_HICON));
+    }
     if (!icon) {
         SendMessageTimeoutW(hwnd, WM_GETICON, ICON_SMALL2, 0, SMTO_ABORTIFHUNG, 50,
                             reinterpret_cast<PDWORD_PTR>(&icon));
     }
     if (!icon) {
-        icon = reinterpret_cast<HICON>(GetClassLongPtrW(hwnd, GCLP_HICON));
-    }
-    if (!icon) {
         icon = reinterpret_cast<HICON>(GetClassLongPtrW(hwnd, GCLP_HICONSM));
     }
-    if (!icon) {
-        icon = LoadIconW(nullptr, IDI_APPLICATION);
+    if (icon) {
+        if (auto bmp = m_iconLoader(icon)) {
+            return bmp;
+        }
     }
-    return icon;
+
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid != 0) {
+        if (HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) {
+            wchar_t exePath[MAX_PATH]{};
+            DWORD size = MAX_PATH;
+            if (QueryFullProcessImageNameW(proc, 0, exePath, &size)) {
+                HICON extracted = nullptr;
+                if (ExtractIconExW(exePath, 0, &extracted, nullptr, 1) > 0 && extracted) {
+                    auto bmp = m_iconLoader(extracted);
+                    DestroyIcon(extracted);
+                    CloseHandle(proc);
+                    if (bmp) {
+                        return bmp;
+                    }
+                }
+            }
+            CloseHandle(proc);
+        }
+    }
+
+    return m_iconLoader(LoadIconW(nullptr, IDI_APPLICATION));
 }
 
 BOOL CALLBACK TaskTracker::enumWindowsProc(HWND hwnd, LPARAM lp) {
-    auto* self = reinterpret_cast<TaskTracker*>(lp);
-    if (!isTaskbarWindow(hwnd, self->m_selfHwnd)) {
+    struct EnumCtx {
+        HWND selfHwnd;
+        std::vector<TaskItem>* out;
+    };
+    auto* ctx = reinterpret_cast<EnumCtx*>(lp);
+    if (!isTaskbarWindow(hwnd, ctx->selfHwnd)) {
         return TRUE;
     }
 
@@ -157,7 +211,7 @@ BOOL CALLBACK TaskTracker::enumWindowsProc(HWND hwnd, LPARAM lp) {
     TaskItem item{};
     item.hwnd = hwnd;
     item.title = title;
-    self->m_items.push_back(std::move(item));
+    ctx->out->push_back(std::move(item));
     return TRUE;
 }
 

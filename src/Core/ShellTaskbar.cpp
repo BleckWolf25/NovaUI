@@ -1,19 +1,19 @@
 /**
-- @file ShellTaskbar.cpp
+ * @file ShellTaskbar.cpp
  *
-- @version 1.0.0
-- @author BleckWolf25
-- @license MIT
+ * @version 1.1.1
+ * @author BleckWolf25
+ * @license MIT
  *
-- @summary Implementation of native Windows taskbar suppression and restoration
+ * @summary Implementation of native Windows taskbar suppression and shell shortcuts
  *
-- @description
-- Finds primary and secondary Explorer taskbars, records the previous AppBar state, enables
-- ABS_AUTOHIDE on Shell_TrayWnd so maximized windows expand to NovaUI's boundary, and keeps
-- native bars hidden via EVENT_OBJECT_SHOW.
+ * @description
+ * Finds primary and secondary Explorer taskbars, records the previous AppBar state, enables
+ * ABS_AUTOHIDE on Shell_TrayWnd so maximized windows expand to NovaUI's boundary, and keeps
+ * native bars hidden via EVENT_OBJECT_SHOW.
  *
-- @since 17/11/2026
-- @updated 17/11/2026
+ * @since 17/11/2026
+ * @updated 17/11/2026
  */
 // ---------- IMPORTS
 #include "Core/ShellTaskbar.h"
@@ -81,6 +81,25 @@ void ShellTaskbar::openStartMenu() {
     inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
 
     SendInput(2, inputs, sizeof(INPUT));
+}
+
+void ShellTaskbar::openNotificationCenter() {
+    INPUT inputs[4]{};
+    inputs[0].type = INPUT_KEYBOARD;
+    inputs[0].ki.wVk = VK_LWIN;
+
+    inputs[1].type = INPUT_KEYBOARD;
+    inputs[1].ki.wVk = 'N';
+
+    inputs[2].type = INPUT_KEYBOARD;
+    inputs[2].ki.wVk = 'N';
+    inputs[2].ki.dwFlags = KEYEVENTF_KEYUP;
+
+    inputs[3].type = INPUT_KEYBOARD;
+    inputs[3].ki.wVk = VK_LWIN;
+    inputs[3].ki.dwFlags = KEYEVENTF_KEYUP;
+
+    SendInput(4, inputs, sizeof(INPUT));
 }
 
 void ShellTaskbar::hideAllTrays() {
