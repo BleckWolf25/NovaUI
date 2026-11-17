@@ -1,21 +1,22 @@
 /**
- * @file main.cpp
+- @file main.cpp
  *
- * @version 1.0.0
- * @author BleckWolf25
- * @license MIT
+- @version 1.1.0
+- @author BleckWolf25
+- @license MIT
  *
- * @summary NovaUI entry point and blocking Win32 message loop
+- @summary NovaUI entry point and blocking Win32 message loop
  *
- * @description
- * Enables per-monitor DPI awareness, starts the taskbar and then blocks in GetMessageW. With no
- * pending messages the thread sleeps in the kernel, which keeps idle CPU at 0%.
+- @description
+- Enables per-monitor DPI awareness, initializes apartment-threaded COM for WIC icon decoding,
+- starts the replacement taskbar and blocks in GetMessageW for 0% idle CPU usage.
  *
- * @since 17/11/2026
- * @updated 17/11/2026
+- @since 17/11/2026
+- @updated 17/11/2026
  */
 // ---------- IMPORTS
 #include <Windows.h>
+#include <objbase.h>
 #include <memory>
 #include "Modules/TaskbarUI.h"
 
@@ -30,15 +31,28 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         return 0;
     }
 
-    TaskbarUI taskbar;
-    if (!taskbar.start()) {
-        return 1;
+    const HRESULT comHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+
+    int exitCode = 0;
+    {
+        TaskbarUI taskbar;
+        if (!taskbar.start()) {
+            if (SUCCEEDED(comHr)) {
+                CoUninitialize();
+            }
+            return 1;
+        }
+
+        MSG msg{};
+        while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        exitCode = static_cast<int>(msg.wParam);
     }
 
-    MSG msg{};
-    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
+    if (SUCCEEDED(comHr)) {
+        CoUninitialize();
     }
-    return static_cast<int>(msg.wParam);
+    return exitCode;
 }
