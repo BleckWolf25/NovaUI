@@ -32,7 +32,7 @@ enum class WindowCompositionAttribute : DWORD {
 struct AccentPolicy {
     DWORD accentState;
     DWORD accentFlags;
-    DWORD gradientColor; // AABBGGRR
+    DWORD gradientColor;
     DWORD animationId;
 };
 
@@ -42,9 +42,7 @@ struct WindowCompositionAttribData {
     SIZE_T sizeOfData;
 };
 
-constexpr DWORD kAccentEnableAcrylicBlurBehind = 4u;
-// Ultra-sheer dark tint (~6% alpha in AABBGGRR) so background content shines through clearly
-constexpr DWORD kLiquidGlassAcrylicTint = 0x1014100Cu;
+constexpr DWORD kLiquidGlassAcrylicTint = 0x0414100Cu;
 }
 
 // ---------- IMPLEMENTATION
@@ -80,9 +78,7 @@ void Window::applyBackdrop() const {
         if (rawProc) {
             auto setCompositionAttribute =
                 reinterpret_cast<SetWindowCompositionAttributeFn>(rawProc);
-            AccentPolicy policy{kAccentEnableAcrylicBlurBehind, 0u, kLiquidGlassAcrylicTint, 0u};
-            WindowCompositionAttribData data{WindowCompositionAttribute::AccentPolicy, &policy,
-                                             sizeof(policy)};
+            WindowCompositionAttribData data{WindowCompositionAttribute::AccentPolicy};
             setCompositionAttribute(m_hwnd, &data);
         }
     }
