@@ -1,7 +1,7 @@
 # ------------------------------------------------------------
 # @file CMakeLists.txt
 #
-# @version 1.3.0
+# @version 1.4.0
 # @author BleckWolf25
 # @license MIT
 #
@@ -10,8 +10,8 @@
 # @description
 # Configures the C++20 MSVC toolchain for the Ninja generator with a statically linked CRT,
 # strict warnings, explicit source lists and native Win32/DirectX shell libraries. Sources are
-# grouped by layer: Core window and shell primitives, Modules for the taskbar feature set, and
-# Render for the Direct2D/DirectComposition pipeline.
+# grouped by layer: Core window, string, path and resource primitives, Modules for the taskbar
+# feature set and its shell readers, and Render for the Direct2D/DirectComposition pipeline.
 #
 # @since 17/11/2026
 # @updated 18/11/2026
@@ -34,12 +34,18 @@ add_executable(NovaUI WIN32
     src/Core/Window.cpp
     src/Core/AppBar.cpp
     src/Core/ShellTaskbar.cpp
+    src/Core/WinString.cpp
+    src/Core/ShellPaths.cpp
     src/Modules/TaskbarUI.cpp
     src/Modules/TaskbarLayout.cpp
     src/Modules/TaskbarPaint.cpp
     src/Modules/TaskbarGuard.cpp
     src/Modules/TaskTracker.cpp
+    src/Modules/WindowIdentity.cpp
+    src/Modules/ShortcutStore.cpp
+    src/Modules/PinFolderWatcher.cpp
     src/Modules/TrayTracker.cpp
+    src/Modules/TrayToolbarReader.cpp
     src/Modules/TaskbarFlyout.cpp
     src/Modules/FlyoutDismissHook.cpp
     src/Modules/ClockWidget.cpp

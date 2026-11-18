@@ -1,18 +1,17 @@
 /**
  * @file TrayTracker.h
  *
- * @version 1.1.0
+ * @version 1.2.0
  * @author BleckWolf25
  * @license MIT
  *
- * @summary System tray icon enumeration, taskbar promotion and native click dispatch
+ * @summary System tray icon promotion, ordering and native click dispatch
  *
  * @description
- * Reads active notification icons from Explorer's TrayNotifyWnd and NotifyIconOverflowWindow
- * toolbars, splits them into Taskbar-Pinned and Overflow tray apps, persists promotion and drag
- * ordering, and forwards native mouse clicks and context menus. Refresh is fully event-driven:
- * Explorer WinEvents arm a single coalescing one-shot timer instead of a perpetual poll, so the
- * process performs zero cross-process reads while idle.
+ * Consumes RawTrayIcon records from TrayToolbarReader, splits them into taskbar-promoted and
+ * overflow sets, persists promotion and drag order in the NovaUI configuration folder, and
+ * forwards left, double and right clicks to the owning tray process with foreground permission.
+ * Explorer WinEvents arm one coalescing timer, so no cross-process reads happen while idle.
  *
  * @since 17/11/2026
  * @updated 18/11/2026
@@ -27,7 +26,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-// ---------- DECLARATIONS
+// ---------- TYPES
 struct TrayItem {
     std::wstring persistKey;
     HWND ownerHwnd = nullptr;
@@ -37,6 +36,7 @@ struct TrayItem {
     Microsoft::WRL::ComPtr<ID2D1Bitmap> icon;
     bool pinnedToBar = false;
 };
+// ---------- DECLARATIONS
 class TrayTracker {
 public:
     using IconLoader = std::function<Microsoft::WRL::ComPtr<ID2D1Bitmap>(HICON)>;

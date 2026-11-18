@@ -1,145 +1,40 @@
 /**
  * @file TrayTracker.cpp
  *
- * @version 1.1.0
+ * @version 1.2.0
  * @author BleckWolf25
  * @license MIT
  *
- * @summary Implementation of Explorer tray icon discovery, taskbar promotion and click routing
+ * @summary Implementation of tray icon promotion, ordering and click routing
  *
  * @description
- * Inspects Explorer's hidden tray toolbars using cross-process VirtualAllocEx reads, routes
- * left, double and right clicks with foreground permission grants to the owning tray process,
- * and persists which tray icons are promoted onto NovaUI's main taskbar.
+ * Fingerprints the reader's output so unchanged enumerations skip UI invalidation entirely,
+ * caches decoded icon bitmaps per persistence key, and sorts promoted icons by the saved drag
+ * order. Clicks grant AllowSetForegroundWindow to the owning process and post its registered
+ * callback message with the shell's notification identifiers. Icon fallbacks copy the raw tray
+ * HICON before decoding because the handle belongs to another process.
  *
  * @since 17/11/2026
  * @updated 18/11/2026
  */
 // ---------- IMPORTS
 #include "Modules/TrayTracker.h"
-
-#include <CommCtrl.h>
+#include "Core/ShellPaths.h"
+#include "Core/WinResources.h"
+#include "Core/WinString.h"
+#include "Modules/TrayToolbarReader.h"
 #include <shellapi.h>
-#include <shlobj.h>
-
 #include <algorithm>
-#include <cwctype>
-#include <filesystem>
 #include <fstream>
-#include <memory>
-
+#include <unordered_map>
 // ---------- CONSTANTS
 namespace {
 constexpr UINT_PTR kTrayCoalesceTimerId = 2;
 constexpr UINT kTrayCoalesceMs = 250;
-
-struct TrayButtonData {
-    HWND hwnd;
-    UINT uID;
-    UINT uCallbackMessage;
-    DWORD reserved[2];
-    HICON hIcon;
-};
-
-std::wstring toLower(std::wstring text) {
-    for (wchar_t& ch : text) {
-        ch = static_cast<wchar_t>(std::towlower(ch));
-    }
-    return text;
+constexpr UINT kIconTimeoutMs = 30;
+constexpr wchar_t kTrayConfigFile[] = L"tray_pins.txt";
 }
-
-std::string wideToUtf8(const std::wstring& wide) {
-    if (wide.empty()) {
-        return {};
-    }
-    const int bytes = WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()),
-                                          nullptr, 0, nullptr, nullptr);
-    if (bytes <= 0) {
-        return {};
-    }
-    std::string utf8(static_cast<size_t>(bytes), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), utf8.data(), bytes,
-                        nullptr, nullptr);
-    return utf8;
-}
-
-std::wstring utf8ToWide(const std::string& utf8) {
-    if (utf8.empty()) {
-        return {};
-    }
-    const int chars =
-        MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
-    if (chars <= 0) {
-        return {};
-    }
-    std::wstring wide(static_cast<size_t>(chars), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), wide.data(), chars);
-    return wide;
-}
-
-std::wstring getConfigFilePath() {
-    PWSTR roamingRaw = nullptr;
-    if (FAILED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &roamingRaw)) ||
-        !roamingRaw) {
-        return {};
-    }
-    std::filesystem::path dir(roamingRaw);
-    CoTaskMemFree(roamingRaw);
-    dir /= L"NovaUI";
-    std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
-    return (dir / L"tray_pins.txt").wstring();
-}
-
-HWND findChildByClass(HWND parent, const wchar_t* className) {
-    if (!parent) {
-        return nullptr;
-    }
-    return FindWindowExW(parent, nullptr, className, nullptr);
-}
-
-std::vector<HWND> findTrayToolbars() {
-    std::vector<HWND> toolbars;
-
-    if (HWND shellTray = FindWindowW(L"Shell_TrayWnd", nullptr)) {
-        HWND trayNotify = findChildByClass(shellTray, L"TrayNotifyWnd");
-        HWND sysPager = findChildByClass(trayNotify, L"SysPager");
-        if (HWND tb = findChildByClass(sysPager, L"ToolbarWindow32")) {
-            toolbars.push_back(tb);
-        } else if (HWND directTb = findChildByClass(trayNotify, L"ToolbarWindow32")) {
-            toolbars.push_back(directTb);
-        }
-    }
-
-    if (HWND overflow = FindWindowW(L"NotifyIconOverflowWindow", nullptr)) {
-        if (HWND tb = findChildByClass(overflow, L"ToolbarWindow32")) {
-            toolbars.push_back(tb);
-        }
-    }
-
-    return toolbars;
-}
-
-std::wstring buildPersistKey(HWND ownerHwnd, UINT uID, const std::wstring& tooltip) {
-    DWORD pid = 0;
-    GetWindowThreadProcessId(ownerHwnd, &pid);
-    if (pid != 0) {
-        if (HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) {
-            wchar_t exePath[MAX_PATH]{};
-            DWORD size = MAX_PATH;
-            if (QueryFullProcessImageNameW(proc, 0, exePath, &size)) {
-                CloseHandle(proc);
-                return toLower(exePath) + L"#" + std::to_wstring(uID);
-            }
-            CloseHandle(proc);
-        }
-    }
-    return L"tip:" + toLower(tooltip) + L"#" + std::to_wstring(uID);
-}
-}
-
 TrayTracker* TrayTracker::s_instance = nullptr;
-
 // ---------- IMPLEMENTATION
 TrayTracker::~TrayTracker() {
     stop();
@@ -200,157 +95,48 @@ bool TrayTracker::onTimer(WPARAM timerId) {
 }
 
 void TrayTracker::refresh() {
-    struct RawTrayIcon {
-        HWND ownerHwnd = nullptr;
-        UINT uID = 0;
-        UINT uCallbackMessage = 0;
-        HICON hIcon = nullptr;
-        std::wstring tooltip;
-        std::wstring persistKey;
-    };
-
-    std::vector<RawTrayIcon> discovered;
-    std::unordered_set<std::wstring> seenKeys;
-
-    for (HWND toolbar : findTrayToolbars()) {
-        DWORD explorerPid = 0;
-        GetWindowThreadProcessId(toolbar, &explorerPid);
-        if (explorerPid == 0) {
-            continue;
-        }
-
-        HANDLE proc = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE,
-                                  FALSE, explorerPid);
-        if (!proc) {
-            continue;
-        }
-
-        constexpr SIZE_T kRemoteBytes = sizeof(TBBUTTON) + sizeof(TrayButtonData) + 512 * sizeof(wchar_t);
-        void* remoteMem =
-            VirtualAllocEx(proc, nullptr, kRemoteBytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-        if (!remoteMem) {
-            CloseHandle(proc);
-            continue;
-        }
-
-        auto* remoteBtn = static_cast<BYTE*>(remoteMem);
-        auto* remoteText = remoteBtn + sizeof(TBBUTTON) + sizeof(TrayButtonData);
-
-        LRESULT countRes = 0;
-        if (SendMessageTimeoutW(toolbar, TB_BUTTONCOUNT, 0, 0, SMTO_ABORTIFHUNG, 50,
-                                reinterpret_cast<PDWORD_PTR>(&countRes)) != 0) {
-            const int count = static_cast<int>(countRes);
-            for (int i = 0; i < count; ++i) {
-                LRESULT ok = 0;
-                if (SendMessageTimeoutW(toolbar, TB_GETBUTTON, static_cast<WPARAM>(i),
-                                        reinterpret_cast<LPARAM>(remoteBtn), SMTO_ABORTIFHUNG, 50,
-                                        reinterpret_cast<PDWORD_PTR>(&ok)) == 0 ||
-                    ok == 0) {
-                    continue;
-                }
-
-                TBBUTTON btn{};
-                SIZE_T bytesRead = 0;
-                if (!ReadProcessMemory(proc, remoteBtn, &btn, sizeof(btn), &bytesRead) ||
-                    bytesRead != sizeof(btn) || btn.dwData == 0) {
-                    continue;
-                }
-
-                if ((btn.fsState & TBSTATE_HIDDEN) != 0) {
-                    continue;
-                }
-
-                TrayButtonData trayData{};
-                if (!ReadProcessMemory(proc, reinterpret_cast<LPCVOID>(btn.dwData), &trayData,
-                                       sizeof(trayData), &bytesRead) ||
-                    bytesRead != sizeof(trayData)) {
-                    continue;
-                }
-
-                if (!trayData.hwnd || !IsWindow(trayData.hwnd)) {
-                    continue;
-                }
-
-                wchar_t tipBuf[256]{};
-                LRESULT textLen = 0;
-                if (SendMessageTimeoutW(toolbar, TB_GETBUTTONTEXTW,
-                                        static_cast<WPARAM>(btn.idCommand),
-                                        reinterpret_cast<LPARAM>(remoteText), SMTO_ABORTIFHUNG, 50,
-                                        reinterpret_cast<PDWORD_PTR>(&textLen)) != 0 &&
-                    textLen > 0) {
-                    const size_t charsToRead =
-                        std::min<size_t>(static_cast<size_t>(textLen), 255);
-                    ReadProcessMemory(proc, remoteText, tipBuf, charsToRead * sizeof(wchar_t),
-                                      &bytesRead);
-                }
-
-                RawTrayIcon raw{};
-                raw.ownerHwnd = trayData.hwnd;
-                raw.uID = trayData.uID;
-                raw.uCallbackMessage = trayData.uCallbackMessage;
-                raw.hIcon = trayData.hIcon;
-                raw.tooltip = tipBuf[0] != L'\0' ? tipBuf : L"System Tray App";
-                raw.persistKey = buildPersistKey(raw.ownerHwnd, raw.uID, raw.tooltip);
-
-                if (seenKeys.insert(raw.persistKey).second) {
-                    discovered.push_back(std::move(raw));
-                }
-            }
-        }
-
-        VirtualFreeEx(proc, remoteMem, 0, MEM_RELEASE);
-        CloseHandle(proc);
-    }
-
-    // Build fingerprint to skip redundant UI invalidations when nothing changed
+    std::vector<RawTrayIcon> discovered = readTrayIcons();
     std::wstring fingerprint;
-    for (const auto& d : discovered) {
-        fingerprint += d.persistKey;
+    for (const auto& icon : discovered) {
+        fingerprint += icon.persistKey;
         fingerprint += L"|";
-        fingerprint += d.tooltip;
+        fingerprint += icon.tooltip;
         fingerprint += L"|";
-        fingerprint += std::to_wstring(reinterpret_cast<uintptr_t>(d.hIcon));
+        fingerprint += std::to_wstring(reinterpret_cast<uintptr_t>(icon.hIcon));
         fingerprint += L";";
     }
-    for (const auto& k : m_pinnedOrder) {
-        fingerprint += L"P:" + k + L";";
+    for (const auto& key : m_pinnedOrder) {
+        fingerprint += L"P:" + key + L";";
     }
-
     if (fingerprint == m_lastFingerprint) {
         return;
     }
     m_lastFingerprint = std::move(fingerprint);
-
     std::vector<TrayItem> nextPinned;
     std::vector<TrayItem> nextOverflow;
-
-    for (auto& d : discovered) {
+    for (auto& icon : discovered) {
         TrayItem item{};
-        item.persistKey = d.persistKey;
-        item.ownerHwnd = d.ownerHwnd;
-        item.uID = d.uID;
-        item.uCallbackMessage = d.uCallbackMessage;
-        item.tooltip = std::move(d.tooltip);
+        item.persistKey = icon.persistKey;
+        item.ownerHwnd = icon.ownerHwnd;
+        item.uID = icon.uID;
+        item.uCallbackMessage = icon.uCallbackMessage;
+        item.tooltip = std::move(icon.tooltip);
         item.pinnedToBar = m_pinnedSet.contains(item.persistKey);
-
-        auto cacheIt = m_iconCache.find(item.persistKey);
-        if (cacheIt != m_iconCache.end() && cacheIt->second) {
-            item.icon = cacheIt->second;
+        const auto cached = m_iconCache.find(item.persistKey);
+        if (cached != m_iconCache.end() && cached->second) {
+            item.icon = cached->second;
         } else {
-            item.icon = loadIconForTray(d.hIcon, d.ownerHwnd);
+            item.icon = loadIconForTray(icon.hIcon, icon.ownerHwnd);
             if (item.icon) {
                 m_iconCache[item.persistKey] = item.icon;
             }
         }
-
         if (item.pinnedToBar) {
             nextPinned.push_back(std::move(item));
         } else {
             nextOverflow.push_back(std::move(item));
         }
     }
-
-    // Sort taskbar-pinned tray icons according to user's saved drag order
     std::unordered_map<std::wstring, size_t> pinRank;
     for (size_t i = 0; i < m_pinnedOrder.size(); ++i) {
         pinRank.try_emplace(m_pinnedOrder[i], i);
@@ -359,14 +145,12 @@ void TrayTracker::refresh() {
                      [&](const TrayItem& a, const TrayItem& b) {
                          const auto itA = pinRank.find(a.persistKey);
                          const auto itB = pinRank.find(b.persistKey);
-                         const size_t rA = (itA != pinRank.end()) ? itA->second : SIZE_MAX;
-                         const size_t rB = (itB != pinRank.end()) ? itB->second : SIZE_MAX;
-                         return rA < rB;
+                         const size_t rankA = (itA != pinRank.end()) ? itA->second : SIZE_MAX;
+                         const size_t rankB = (itB != pinRank.end()) ? itB->second : SIZE_MAX;
+                         return rankA < rankB;
                      });
-
     m_pinnedItems = std::move(nextPinned);
     m_overflowItems = std::move(nextOverflow);
-
     if (m_onChanged) {
         m_onChanged();
     }
@@ -448,12 +232,10 @@ void TrayTracker::movePinnedTrayItem(size_t fromIndex, size_t toIndex) {
         fromIndex == toIndex) {
         return;
     }
-
     TrayItem moved = std::move(m_pinnedItems[fromIndex]);
     m_pinnedItems.erase(m_pinnedItems.begin() + static_cast<ptrdiff_t>(fromIndex));
     m_pinnedItems.insert(m_pinnedItems.begin() + static_cast<ptrdiff_t>(toIndex),
                          std::move(moved));
-
     m_pinnedOrder.clear();
     for (const auto& item : m_pinnedItems) {
         m_pinnedOrder.push_back(item.persistKey);
@@ -467,8 +249,7 @@ void TrayTracker::movePinnedTrayItem(size_t fromIndex, size_t toIndex) {
 void TrayTracker::loadConfig() {
     m_pinnedOrder.clear();
     m_pinnedSet.clear();
-
-    const std::wstring path = getConfigFilePath();
+    const std::wstring path = novaConfigFilePath(kTrayConfigFile);
     if (path.empty()) {
         return;
     }
@@ -488,7 +269,7 @@ void TrayTracker::loadConfig() {
 }
 
 void TrayTracker::saveConfig() const {
-    const std::wstring path = getConfigFilePath();
+    const std::wstring path = novaConfigFilePath(kTrayConfigFile);
     if (path.empty()) {
         return;
     }
@@ -506,55 +287,48 @@ Microsoft::WRL::ComPtr<ID2D1Bitmap> TrayTracker::loadIconForTray(HICON rawIcon,
     if (!m_iconLoader) {
         return nullptr;
     }
-
     if (rawIcon) {
         if (HICON copied = CopyIcon(rawIcon)) {
-            auto bmp = m_iconLoader(copied);
-            DestroyIcon(copied);
-            if (bmp) {
-                return bmp;
+            const UniqueIcon owned(copied);
+            if (auto bitmap = m_iconLoader(owned.get())) {
+                return bitmap;
             }
         }
-        if (auto bmp = m_iconLoader(rawIcon)) {
-            return bmp;
+        if (auto bitmap = m_iconLoader(rawIcon)) {
+            return bitmap;
         }
     }
-
     if (IsWindow(ownerHwnd)) {
-        HICON wndIcon = nullptr;
-        SendMessageTimeoutW(ownerHwnd, WM_GETICON, ICON_SMALL2, 0, SMTO_ABORTIFHUNG, 30,
-                            reinterpret_cast<PDWORD_PTR>(&wndIcon));
-        if (!wndIcon) {
-            wndIcon = reinterpret_cast<HICON>(GetClassLongPtrW(ownerHwnd, GCLP_HICONSM));
+        HICON windowIcon = nullptr;
+        SendMessageTimeoutW(ownerHwnd, WM_GETICON, ICON_SMALL2, 0, SMTO_ABORTIFHUNG,
+                            kIconTimeoutMs, reinterpret_cast<PDWORD_PTR>(&windowIcon));
+        if (!windowIcon) {
+            windowIcon = reinterpret_cast<HICON>(GetClassLongPtrW(ownerHwnd, GCLP_HICONSM));
         }
-        if (wndIcon) {
-            if (auto bmp = m_iconLoader(wndIcon)) {
-                return bmp;
+        if (windowIcon) {
+            if (auto bitmap = m_iconLoader(windowIcon)) {
+                return bitmap;
             }
         }
-
         DWORD pid = 0;
         GetWindowThreadProcessId(ownerHwnd, &pid);
         if (pid != 0) {
-            if (HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) {
+            const UniqueHandle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
+            if (process.valid()) {
                 wchar_t exePath[MAX_PATH]{};
                 DWORD size = MAX_PATH;
-                if (QueryFullProcessImageNameW(proc, 0, exePath, &size)) {
+                if (QueryFullProcessImageNameW(process.get(), 0, exePath, &size)) {
                     HICON extracted = nullptr;
                     if (ExtractIconExW(exePath, 0, &extracted, nullptr, 1) > 0 && extracted) {
-                        auto bmp = m_iconLoader(extracted);
-                        DestroyIcon(extracted);
-                        CloseHandle(proc);
-                        if (bmp) {
-                            return bmp;
+                        const UniqueIcon owned(extracted);
+                        if (auto bitmap = m_iconLoader(owned.get())) {
+                            return bitmap;
                         }
                     }
                 }
-                CloseHandle(proc);
             }
         }
     }
-
     return m_iconLoader(LoadIconW(nullptr, IDI_APPLICATION));
 }
 
