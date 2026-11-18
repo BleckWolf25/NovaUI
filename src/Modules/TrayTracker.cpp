@@ -1,7 +1,7 @@
 /**
  * @file TrayTracker.cpp
  *
- * @version 1.0.0
+ * @version 1.1.0
  * @author BleckWolf25
  * @license MIT
  *
@@ -13,7 +13,7 @@
  * and persists which tray icons are promoted onto NovaUI's main taskbar.
  *
  * @since 17/11/2026
- * @updated 17/11/2026
+ * @updated 18/11/2026
  */
 // ---------- IMPORTS
 #include "Modules/TrayTracker.h"
@@ -30,8 +30,8 @@
 
 // ---------- CONSTANTS
 namespace {
-constexpr UINT_PTR kTraySyncTimerId = 2;
-constexpr UINT kTraySyncIntervalMs = 1500;
+constexpr UINT_PTR kTrayCoalesceTimerId = 2;
+constexpr UINT kTrayCoalesceMs = 250;
 
 struct TrayButtonData {
     HWND hwnd;
@@ -150,9 +150,7 @@ void TrayTracker::start(HWND selfHwnd, IconLoader iconLoader, ChangeCallback onC
     m_iconLoader = std::move(iconLoader);
     m_onChanged = std::move(onChanged);
     s_instance = this;
-
     loadConfig();
-
     if (HWND shellTray = FindWindowW(L"Shell_TrayWnd", nullptr)) {
         DWORD explorerPid = 0;
         GetWindowThreadProcessId(shellTray, &explorerPid);
@@ -163,18 +161,14 @@ void TrayTracker::start(HWND selfHwnd, IconLoader iconLoader, ChangeCallback onC
                 WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
         }
     }
-
-    if (m_selfHwnd) {
-        SetTimer(m_selfHwnd, kTraySyncTimerId, kTraySyncIntervalMs, nullptr);
-    }
-
     refresh();
 }
 
 void TrayTracker::stop() {
     if (m_selfHwnd) {
-        KillTimer(m_selfHwnd, kTraySyncTimerId);
+        KillTimer(m_selfHwnd, kTrayCoalesceTimerId);
     }
+    m_refreshPending = false;
     if (m_explorerHook) {
         UnhookWinEvent(m_explorerHook);
         m_explorerHook = nullptr;
@@ -187,10 +181,20 @@ void TrayTracker::stop() {
     }
 }
 
+void TrayTracker::armRefresh() {
+    if (m_refreshPending || !m_selfHwnd) {
+        return;
+    }
+    m_refreshPending = true;
+    SetTimer(m_selfHwnd, kTrayCoalesceTimerId, kTrayCoalesceMs, nullptr);
+}
+
 bool TrayTracker::onTimer(WPARAM timerId) {
-    if (timerId != kTraySyncTimerId) {
+    if (timerId != kTrayCoalesceTimerId) {
         return false;
     }
+    KillTimer(m_selfHwnd, kTrayCoalesceTimerId);
+    m_refreshPending = false;
     refresh();
     return true;
 }
@@ -557,6 +561,6 @@ Microsoft::WRL::ComPtr<ID2D1Bitmap> TrayTracker::loadIconForTray(HICON rawIcon,
 void CALLBACK TrayTracker::onExplorerWinEvent(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD,
                                               DWORD) {
     if (s_instance) {
-        s_instance->refresh();
+        s_instance->armRefresh();
     }
 }

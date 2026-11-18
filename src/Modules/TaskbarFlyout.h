@@ -1,7 +1,7 @@
 /**
  * @file TaskbarFlyout.h
  *
- * @version 1.0.0
+ * @version 1.1.0
  * @author BleckWolf25
  * @license MIT
  *
@@ -10,11 +10,13 @@
  * @description
  * Renders a lightweight Direct2D/DirectComposition popup window anchored above the taskbar.
  * Supports four modes: single-line hover tooltips, multi-window switcher lists with close
- * buttons, app right-click context menus (Launch, Pin/Unpin, Close), and a System Tray
- * overflow grid where tray apps can be clicked, right-clicked, or pinned onto the taskbar.
+ * buttons, app right-click context menus (Launch, Pin/Unpin, Close), and a System Tray overflow
+ * grid. While an interactive mode is visible a low-level mouse hook watches for pointer exit or
+ * outside clicks and posts WM_APP_FLYOUT_DISMISS so the popup can never linger; the hook is
+ * removed the instant the popup hides, keeping idle CPU at zero.
  *
  * @since 17/11/2026
- * @updated 17/11/2026
+ * @updated 18/11/2026
  */
 #pragma once
 // ---------- IMPORTS
@@ -22,22 +24,15 @@
 #include "Modules/TaskTracker.h"
 #include "Modules/TrayTracker.h"
 #include "Render/Renderer.h"
-
 #include <functional>
 #include <string>
 #include <vector>
-
+// ---------- CONSTANTS
+inline constexpr UINT WM_APP_FLYOUT_DISMISS = WM_APP + 3;
 // ---------- DECLARATIONS
 class TaskbarFlyout final : public Window {
 public:
-    enum class Mode {
-        Hidden,
-        Tooltip,
-        WindowList,
-        AppContextMenu,
-        TrayOverflow,
-    };
-
+    enum class Mode { Hidden, Tooltip, WindowList, AppContextMenu, TrayOverflow };
     struct Callbacks {
         std::function<void(HWND)> onFocusWindow;
         std::function<void(HWND)> onCloseWindow;
@@ -48,10 +43,8 @@ public:
         std::function<void(const TrayItem&)> onTrayRightClick;
         std::function<void(const std::wstring& persistKey)> onTrayTogglePinToBar;
     };
-
     ~TaskbarFlyout() override;
     bool init(HWND taskbarHwnd, Callbacks callbacks);
-
     void showTooltip(int anchorCenterXScreen, int taskbarTopScreen, const std::wstring& text);
     void showWindowList(int anchorCenterXScreen, int taskbarTopScreen, size_t appIndex,
                         const TaskItem& item);
@@ -60,38 +53,34 @@ public:
     void showTrayOverflow(int anchorCenterXScreen, int taskbarTopScreen,
                           const std::vector<TrayItem>& overflowItems);
     void hide();
-
     Mode mode() const noexcept { return m_mode; }
     bool isInteractive() const noexcept {
         return m_mode == Mode::WindowList || m_mode == Mode::AppContextMenu ||
                m_mode == Mode::TrayOverflow;
     }
-
 protected:
     LRESULT onMessage(UINT msg, WPARAM wp, LPARAM lp) override;
-
 private:
     struct MenuAction {
         enum class Kind { LaunchNew, TogglePin, CloseAll };
         Kind kind = Kind::LaunchNew;
         std::wstring label;
     };
-
     void positionAndShow(int anchorCenterXScreen, int taskbarTopScreen, float widthDip,
                          float heightDip, bool activate);
+    void armDismiss();
+    void disarmDismiss();
     void onMouseMove(int xPx, int yPx);
     void onLeftClick(int xPx, int yPx);
     void onRightClick(int xPx, int yPx);
     void paint();
-
+    static LRESULT CALLBACK mouseHook(int code, WPARAM wp, LPARAM lp);
     HWND m_taskbarHwnd = nullptr;
     Callbacks m_callbacks;
     Renderer m_renderer;
-
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_titleFormat;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_itemFormat;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_badgeFormat;
-
     Mode m_mode = Mode::Hidden;
     std::wstring m_tooltipText;
     size_t m_appIndex = 0;
@@ -99,9 +88,10 @@ private:
     std::vector<WindowEntry> m_windows;
     std::vector<MenuAction> m_menuActions;
     std::vector<TrayItem> m_trayItems;
-
     int m_hoverRow = -1;
     bool m_hoverCloseBtn = false;
     bool m_hoverPinBtn = false;
     bool m_trackingMouse = false;
+    HHOOK m_dismissHook = nullptr;
+    static TaskbarFlyout* s_active;
 };

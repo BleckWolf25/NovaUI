@@ -1,7 +1,7 @@
 /**
  * @file Window.cpp
  *
- * @version 1.1.0
+ * @version 1.1.1
  * @author BleckWolf25
  * @license MIT
  *
@@ -13,7 +13,7 @@
  * applyBackdrop enables borderless dark Acrylic translucency for Liquid Glass compositing.
  *
  * @since 17/11/2026
- * @updated 17/11/2026
+ * @updated 18/11/2026
  */
 // ---------- IMPORTS
 #include "Core/Window.h"
@@ -30,6 +30,7 @@ constexpr COLORREF kDwmColorNone = 0xFFFFFFFEu;
 bool Window::create(const wchar_t* className, DWORD style, DWORD exStyle) {
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
+    wc.style = CS_DBLCLKS;
     wc.lpfnWndProc = &Window::wndProc;
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
@@ -37,7 +38,6 @@ bool Window::create(const wchar_t* className, DWORD style, DWORD exStyle) {
     if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
         return false;
     }
-
     return CreateWindowExW(exStyle, className, L"NovaUI", style, 0, 0, 0, 0, nullptr, nullptr,
                            wc.hInstance, this) != nullptr;
 }

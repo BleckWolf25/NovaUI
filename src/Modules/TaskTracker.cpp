@@ -1,7 +1,7 @@
 /**
  * @file TaskTracker.cpp
  *
- * @version 1.3.0
+ * @version 1.3.1
  * @author BleckWolf25
  * @license MIT
  *
@@ -12,7 +12,7 @@
  * Rebuilds only when the shell fires window lifecycle or foreground WinEvents.
  *
  * @since 17/11/2026
- * @updated 17/11/2026
+ * @updated 18/11/2026
  */
 // ---------- IMPORTS
 #include "Modules/TaskTracker.h"
@@ -123,14 +123,12 @@ std::wstring utf8ToWide(const std::string& utf8) {
 
 std::vector<std::wstring> readTaskbandFavoriteNames() {
     std::vector<std::wstring> names;
-
     HKEY key = nullptr;
     if (RegOpenKeyExW(HKEY_CURRENT_USER,
                       L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Taskband", 0,
                       KEY_READ, &key) != ERROR_SUCCESS) {
         return names;
     }
-
     DWORD type = 0;
     DWORD byteCount = 0;
     if (RegQueryValueExW(key, L"Favorites", nullptr, &type, nullptr, &byteCount) != ERROR_SUCCESS ||
@@ -138,7 +136,6 @@ std::vector<std::wstring> readTaskbandFavoriteNames() {
         RegCloseKey(key);
         return names;
     }
-
     std::vector<BYTE> blob(byteCount);
     if (RegQueryValueExW(key, L"Favorites", nullptr, nullptr, blob.data(), &byteCount) !=
         ERROR_SUCCESS) {
@@ -146,47 +143,45 @@ std::vector<std::wstring> readTaskbandFavoriteNames() {
         return names;
     }
     RegCloseKey(key);
-
+    blob.resize(byteCount);
     size_t pos = 0;
-    while (pos < blob.size()) {
+    while (pos + sizeof(USHORT) <= blob.size()) {
         if (blob[pos] == 0xFF) {
             break;
         }
-        if (blob[pos] != 0x00) {
-            ++pos;
+        USHORT first = 0;
+        std::memcpy(&first, blob.data() + pos, sizeof(USHORT));
+        if (first == 0) {
+            pos += sizeof(USHORT);
             continue;
         }
-        ++pos;
-
         const size_t pidlStart = pos;
-        bool validPidl = false;
+        bool valid = false;
         while (pos + sizeof(USHORT) <= blob.size()) {
             USHORT cb = 0;
             std::memcpy(&cb, blob.data() + pos, sizeof(USHORT));
-            pos += sizeof(USHORT);
             if (cb == 0) {
-                validPidl = (pos > pidlStart + sizeof(USHORT));
+                pos += sizeof(USHORT);
+                valid = pos > pidlStart + sizeof(USHORT);
                 break;
             }
-            if (cb < sizeof(USHORT) || pos + (cb - sizeof(USHORT)) > blob.size()) {
-                validPidl = false;
+            if (cb < sizeof(USHORT) || pos + cb > blob.size()) {
                 pos = blob.size();
                 break;
             }
-            pos += (cb - sizeof(USHORT));
+            pos += cb;
         }
-
-        if (validPidl) {
-            const auto* pidl = reinterpret_cast<LPCITEMIDLIST>(blob.data() + pidlStart);
-            PWSTR displayName = nullptr;
-            if (SUCCEEDED(SHGetNameFromIDList(pidl, SIGDN_NORMALDISPLAY, &displayName)) &&
-                displayName) {
-                names.push_back(toLower(displayName));
-                CoTaskMemFree(displayName);
-            }
+        if (!valid) {
+            break;
+        }
+        const auto* pidl = reinterpret_cast<LPCITEMIDLIST>(blob.data() + pidlStart);
+        PWSTR displayName = nullptr;
+        if (SUCCEEDED(SHGetNameFromIDList(pidl, SIGDN_NORMALDISPLAY, &displayName)) &&
+            displayName) {
+            names.push_back(toLower(displayName));
+            CoTaskMemFree(displayName);
         }
     }
-
     return names;
 }
 
@@ -384,6 +379,7 @@ void TaskTracker::start(HWND selfHwnd, IconLoader iconLoader, HBitmapLoader hbit
         {EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE},
         {EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_NAMECHANGE},
         {EVENT_OBJECT_CLOAKED, EVENT_OBJECT_UNCLOAKED},
+        {EVENT_SYSTEM_DESKTOPSWITCH, EVENT_SYSTEM_DESKTOPSWITCH},
     };
     for (const auto& range : ranges) {
         if (HWINEVENTHOOK hook = SetWinEventHook(range[0], range[1], nullptr,
@@ -725,19 +721,16 @@ bool TaskTracker::canPin(const TaskItem& item) const noexcept {
     return !item.pinned && (!item.targetPath.empty() || !item.appUserModelId.empty());
 }
 
-void TaskTracker::pinItem(const TaskItem& item) {
+bool TaskTracker::pinItem(const TaskItem& item) {
     if (!canPin(item)) {
-        return;
+        return false;
     }
-
     const std::wstring pinnedDir = getPinnedTaskbarDirectory();
     if (pinnedDir.empty()) {
-        return;
+        return false;
     }
-
     std::error_code ec;
     std::filesystem::create_directories(pinnedDir, ec);
-
     const std::wstring baseName = sanitizeFileName(item.appName);
     std::filesystem::path lnkPath = std::filesystem::path(pinnedDir) / (baseName + L".lnk");
     int suffix = 2;
@@ -745,16 +738,15 @@ void TaskTracker::pinItem(const TaskItem& item) {
         lnkPath = std::filesystem::path(pinnedDir) /
                   (baseName + L" (" + std::to_wstring(suffix++) + L").lnk");
     }
-
     m_suppressWatcher = true;
     const bool created =
         createShortcutFile(lnkPath.wstring(), item.targetPath, item.appUserModelId, item.appName);
     m_suppressWatcher = false;
-
     if (created) {
         reloadPinnedApps();
         savePinOrder();
     }
+    return created;
 }
 
 void TaskTracker::unpinItem(const TaskItem& item) {

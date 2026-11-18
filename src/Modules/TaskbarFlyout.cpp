@@ -1,7 +1,7 @@
 /**
  * @file TaskbarFlyout.cpp
  *
- * @version 1.0.0
+ * @version 1.1.0
  * @author BleckWolf25
  * @license MIT
  *
@@ -13,7 +13,7 @@
  * clicks to window management, app pinning, or system tray applications.
  *
  * @since 17/11/2026
- * @updated 17/11/2026
+ * @updated 18/11/2026
  */
 // ---------- IMPORTS
 #include "Modules/TaskbarFlyout.h"
@@ -48,6 +48,7 @@ constexpr D2D1_COLOR_F kMuted{1.0f, 1.0f, 1.0f, 0.65f};
 }
 
 // ---------- IMPLEMENTATION
+TaskbarFlyout* TaskbarFlyout::s_active = nullptr;
 TaskbarFlyout::~TaskbarFlyout() {
     if (m_hwnd) {
         DestroyWindow(m_hwnd);
@@ -175,6 +176,7 @@ void TaskbarFlyout::hide() {
     m_hoverRow = -1;
     m_hoverCloseBtn = false;
     m_hoverPinBtn = false;
+    disarmDismiss();
     if (m_hwnd) {
         ShowWindow(m_hwnd, SW_HIDE);
     }
@@ -221,6 +223,9 @@ LRESULT TaskbarFlyout::onMessage(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_RBUTTONUP:
         onRightClick(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
         return 0;
+    case WM_APP_FLYOUT_DISMISS:
+        hide();
+        return 0;
     default:
         break;
     }
@@ -253,7 +258,54 @@ void TaskbarFlyout::positionAndShow(int anchorCenterXScreen, int taskbarTopScree
     if (activate) {
         SetForegroundWindow(m_hwnd);
     }
+    if (isInteractive()) {
+        armDismiss();
+    } else {
+        disarmDismiss();
+    }
     InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void TaskbarFlyout::armDismiss() {
+    if (m_dismissHook) {
+        return;
+    }
+    s_active = this;
+    m_dismissHook = SetWindowsHookExW(WH_MOUSE_LL, &TaskbarFlyout::mouseHook,
+                                      GetModuleHandleW(nullptr), 0);
+}
+
+void TaskbarFlyout::disarmDismiss() {
+    if (m_dismissHook) {
+        UnhookWindowsHookEx(m_dismissHook);
+        m_dismissHook = nullptr;
+    }
+    if (s_active == this) {
+        s_active = nullptr;
+    }
+}
+
+LRESULT CALLBACK TaskbarFlyout::mouseHook(int code, WPARAM wp, LPARAM lp) {
+    if (code == HC_ACTION && s_active && s_active->m_hwnd) {
+        const auto* info = reinterpret_cast<MSLLHOOKSTRUCT*>(lp);
+        RECT flyoutRc{};
+        RECT barRc{};
+        GetWindowRect(s_active->m_hwnd, &flyoutRc);
+        if (s_active->m_taskbarHwnd) {
+            GetWindowRect(s_active->m_taskbarHwnd, &barRc);
+        } else {
+            barRc = flyoutRc;
+        }
+        RECT keepAlive{};
+        UnionRect(&keepAlive, &flyoutRc, &barRc);
+        const DWORD message = static_cast<DWORD>(wp);
+        const bool isClick = message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN ||
+                             message == WM_MBUTTONDOWN;
+        if (!PtInRect(&keepAlive, info->pt) && (isClick || message == WM_MOUSEMOVE)) {
+            PostMessageW(s_active->m_hwnd, WM_APP_FLYOUT_DISMISS, 0, 0);
+        }
+    }
+    return CallNextHookEx(nullptr, code, wp, lp);
 }
 
 void TaskbarFlyout::onMouseMove(int xPx, int yPx) {
@@ -451,7 +503,7 @@ void TaskbarFlyout::paint() {
                     dc.FillRoundedRectangle(D2D1::RoundedRect(closeRect, 5.0f, 5.0f),
                                             m_renderer.brush(kCloseHover));
                 }
-                dc.DrawText(L"×", 1, m_badgeFormat.Get(), closeRect, m_renderer.brush(kText));
+                dc.DrawText(L"\u00D7", 1, m_badgeFormat.Get(), closeRect, m_renderer.brush(kText));
                 y += kRowHeight;
             }
             return;

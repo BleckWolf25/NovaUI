@@ -1,7 +1,7 @@
 /**
  * @file TaskTracker.h
  *
- * @version 1.3.0
+ * @version 1.3.1
  * @author BleckWolf25
  * @license MIT
  *
@@ -13,7 +13,7 @@
  * without polling.
  *
  * @since 17/11/2026
- * @updated 17/11/2026
+ * @updated 18/11/2026
  */
 #pragma once
 // ---------- IMPORTS
@@ -90,7 +90,7 @@ public:
     void closeWindow(HWND target) const;
 
     bool canPin(const TaskItem& item) const noexcept;
-    void pinItem(const TaskItem& item);
+    bool pinItem(const TaskItem& item);
     void unpinItem(const TaskItem& item);
     void pinExternalPath(const std::wstring& filePath);
     void movePinnedItem(size_t fromIndex, size_t toIndex);
