@@ -16,7 +16,6 @@
  */
 // ---------- IMPORTS
 #include <Windows.h>
-#include <objbase.h>
 #include <memory>
 #include "Modules/TaskbarUI.h"
 

@@ -23,7 +23,6 @@
 #include <shlobj.h>
 
 #include <algorithm>
-#include <cstring>
 #include <cwctype>
 #include <filesystem>
 #include <fstream>

@@ -18,7 +18,6 @@
 #pragma once
 // ---------- IMPORTS
 #include <Windows.h>
-#include <shellapi.h>
 
 // ---------- CONSTANTS
 inline constexpr UINT WM_APP_APPBAR = WM_APP + 1;
