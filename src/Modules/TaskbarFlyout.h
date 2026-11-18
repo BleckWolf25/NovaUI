@@ -1,7 +1,7 @@
 /**
  * @file TaskbarFlyout.h
  *
- * @version 1.1.0
+ * @version 1.3.0
  * @author BleckWolf25
  * @license MIT
  *
@@ -11,9 +11,9 @@
  * Renders a lightweight Direct2D/DirectComposition popup window anchored above the taskbar.
  * Supports four modes: single-line hover tooltips, multi-window switcher lists with close
  * buttons, app right-click context menus (Launch, Pin/Unpin, Close), and a System Tray overflow
- * grid. While an interactive mode is visible a low-level mouse hook watches for pointer exit or
+ * grid. While an interactive mode is visible a FlyoutDismissHook watches for pointer exit or
  * outside clicks and posts WM_APP_FLYOUT_DISMISS so the popup can never linger; the hook is
- * removed the instant the popup hides, keeping idle CPU at zero.
+ * released the instant the popup hides, keeping idle CPU at zero.
  *
  * @since 17/11/2026
  * @updated 18/11/2026
@@ -21,6 +21,7 @@
 #pragma once
 // ---------- IMPORTS
 #include "Core/Window.h"
+#include "Modules/FlyoutDismissHook.h"
 #include "Modules/TaskTracker.h"
 #include "Modules/TrayTracker.h"
 #include "Render/Renderer.h"
@@ -68,13 +69,10 @@ private:
     };
     void positionAndShow(int anchorCenterXScreen, int taskbarTopScreen, float widthDip,
                          float heightDip, bool activate);
-    void armDismiss();
-    void disarmDismiss();
     void onMouseMove(int xPx, int yPx);
     void onLeftClick(int xPx, int yPx);
     void onRightClick(int xPx, int yPx);
     void paint();
-    static LRESULT CALLBACK mouseHook(int code, WPARAM wp, LPARAM lp);
     HWND m_taskbarHwnd = nullptr;
     Callbacks m_callbacks;
     Renderer m_renderer;
@@ -92,6 +90,5 @@ private:
     bool m_hoverCloseBtn = false;
     bool m_hoverPinBtn = false;
     bool m_trackingMouse = false;
-    HHOOK m_dismissHook = nullptr;
-    static TaskbarFlyout* s_active;
+    FlyoutDismissHook m_dismiss;
 };

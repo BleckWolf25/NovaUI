@@ -1,16 +1,17 @@
 /**
  * @file TaskbarFlyout.cpp
  *
- * @version 1.1.0
+ * @version 1.2.0
  * @author BleckWolf25
  * @license MIT
  *
  * @summary Implementation of the blur-free glass flyout popup window
  *
  * @description
- * Renders crisp, ultra-transparent glass popups above the taskbar without blur. Dismisses
- * automatically on focus loss (WM_ACTIVATE == WA_INACTIVE) for interactive menus and routes
- * clicks to window management, app pinning, or system tray applications.
+ * Renders crisp, ultra-transparent glass popups above the taskbar without blur. Interactive
+ * modes arm a FlyoutDismissHook that posts WM_APP_FLYOUT_DISMISS when the pointer leaves the
+ * popup/taskbar region or clicks outside, and focus loss (WM_ACTIVATE == WA_INACTIVE) also
+ * dismisses. Routes clicks to window management, app pinning, or system tray applications.
  *
  * @since 17/11/2026
  * @updated 18/11/2026
@@ -48,8 +49,8 @@ constexpr D2D1_COLOR_F kMuted{1.0f, 1.0f, 1.0f, 0.65f};
 }
 
 // ---------- IMPLEMENTATION
-TaskbarFlyout* TaskbarFlyout::s_active = nullptr;
 TaskbarFlyout::~TaskbarFlyout() {
+    m_dismiss.disarm();
     if (m_hwnd) {
         DestroyWindow(m_hwnd);
     }
@@ -176,7 +177,7 @@ void TaskbarFlyout::hide() {
     m_hoverRow = -1;
     m_hoverCloseBtn = false;
     m_hoverPinBtn = false;
-    disarmDismiss();
+    m_dismiss.disarm();
     if (m_hwnd) {
         ShowWindow(m_hwnd, SW_HIDE);
     }
@@ -259,53 +260,11 @@ void TaskbarFlyout::positionAndShow(int anchorCenterXScreen, int taskbarTopScree
         SetForegroundWindow(m_hwnd);
     }
     if (isInteractive()) {
-        armDismiss();
+        m_dismiss.arm(m_hwnd, m_taskbarHwnd, WM_APP_FLYOUT_DISMISS);
     } else {
-        disarmDismiss();
+        m_dismiss.disarm();
     }
     InvalidateRect(m_hwnd, nullptr, FALSE);
-}
-
-void TaskbarFlyout::armDismiss() {
-    if (m_dismissHook) {
-        return;
-    }
-    s_active = this;
-    m_dismissHook = SetWindowsHookExW(WH_MOUSE_LL, &TaskbarFlyout::mouseHook,
-                                      GetModuleHandleW(nullptr), 0);
-}
-
-void TaskbarFlyout::disarmDismiss() {
-    if (m_dismissHook) {
-        UnhookWindowsHookEx(m_dismissHook);
-        m_dismissHook = nullptr;
-    }
-    if (s_active == this) {
-        s_active = nullptr;
-    }
-}
-
-LRESULT CALLBACK TaskbarFlyout::mouseHook(int code, WPARAM wp, LPARAM lp) {
-    if (code == HC_ACTION && s_active && s_active->m_hwnd) {
-        const auto* info = reinterpret_cast<MSLLHOOKSTRUCT*>(lp);
-        RECT flyoutRc{};
-        RECT barRc{};
-        GetWindowRect(s_active->m_hwnd, &flyoutRc);
-        if (s_active->m_taskbarHwnd) {
-            GetWindowRect(s_active->m_taskbarHwnd, &barRc);
-        } else {
-            barRc = flyoutRc;
-        }
-        RECT keepAlive{};
-        UnionRect(&keepAlive, &flyoutRc, &barRc);
-        const DWORD message = static_cast<DWORD>(wp);
-        const bool isClick = message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN ||
-                             message == WM_MBUTTONDOWN;
-        if (!PtInRect(&keepAlive, info->pt) && (isClick || message == WM_MOUSEMOVE)) {
-            PostMessageW(s_active->m_hwnd, WM_APP_FLYOUT_DISMISS, 0, 0);
-        }
-    }
-    return CallNextHookEx(nullptr, code, wp, lp);
 }
 
 void TaskbarFlyout::onMouseMove(int xPx, int yPx) {
