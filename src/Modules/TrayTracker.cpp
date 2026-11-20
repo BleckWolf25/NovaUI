@@ -19,10 +19,11 @@
  */
 // ---------- IMPORTS
 #include "Modules/TrayTracker.h"
+#include "Modules/TrayAutomationReader.h"
+#include "Modules/TrayToolbarReader.h"
 #include "Core/ShellPaths.h"
 #include "Core/WinResources.h"
 #include "Core/WinString.h"
-#include "Modules/TrayToolbarReader.h"
 #include <shellapi.h>
 #include <algorithm>
 #include <fstream>
@@ -122,6 +123,7 @@ void TrayTracker::refresh() {
         item.uCallbackMessage = icon.uCallbackMessage;
         item.tooltip = std::move(icon.tooltip);
         item.pinnedToBar = m_pinnedSet.contains(item.persistKey);
+        item.automation = (icon.source == TrayIconSource::Automation);
         const auto cached = m_iconCache.find(item.persistKey);
         if (cached != m_iconCache.end() && cached->second) {
             item.icon = cached->second;
@@ -157,6 +159,10 @@ void TrayTracker::refresh() {
 }
 
 void TrayTracker::leftClick(const TrayItem& item) const {
+    if (item.automation) {
+        invokeAutomationTrayIcon(item.persistKey);
+        return;
+    }
     if (!IsWindow(item.ownerHwnd)) {
         return;
     }
@@ -173,6 +179,10 @@ void TrayTracker::leftClick(const TrayItem& item) const {
 }
 
 void TrayTracker::doubleClick(const TrayItem& item) const {
+    if (item.automation) {
+        invokeAutomationTrayIcon(item.persistKey);
+        return;
+    }
     if (!IsWindow(item.ownerHwnd)) {
         return;
     }
@@ -188,6 +198,10 @@ void TrayTracker::doubleClick(const TrayItem& item) const {
 }
 
 void TrayTracker::rightClick(const TrayItem& item) const {
+    if (item.automation) {
+        invokeAutomationTrayIcon(item.persistKey);
+        return;
+    }
     if (!IsWindow(item.ownerHwnd)) {
         return;
     }

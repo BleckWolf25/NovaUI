@@ -1,17 +1,18 @@
 /**
  * @file TaskbarLayout.cpp
  *
- * @version 1.0.0
+ * @version 1.1.0
  * @author BleckWolf25
  * @license MIT
  *
- * @summary Implementation of dock slot geometry, hit resolution and drag target indexing
+ * @summary Implementation of scaled dock geometry, hit resolution and drag target indexing
  *
  * @description
- * lays out the Start emblem, the optional Task View slot and the app run from the left edge,
- * then the clock, overflow chevron and promoted tray icons from the right edge, clamping the app
- * run to the space that remains. Hit resolution walks those same positions in priority order and
- * drag indexing converts a pointer X into a clamped destination slot.
+ * Scales the base metric set by the Windows size index, walks the enabled left-hand shell slots,
+ * then reserves the clock, chevron, promoted tray icons and visualizer strip from the right edge.
+ * The remaining span hosts the app run, centred when the alignment setting says centre. Hit
+ * resolution walks the same positions in priority order and drag indexing converts a pointer X
+ * into a clamped destination slot.
  *
  * @since 18/11/2026
  * @updated 18/11/2026
@@ -22,51 +23,113 @@
 #include <cmath>
 // ---------- IMPLEMENTATION
 float TaskbarLayout::appSlotX(int index) const noexcept {
-    return appsStartX + static_cast<float>(index) * (kSlotSize + kSlotGap);
+    return appsStartX + static_cast<float>(index) * (m.slotSize + m.slotGap);
 }
 
 float TaskbarLayout::traySlotX(int index) const noexcept {
-    return trayLeft + static_cast<float>(index) * (kTraySlotSize + kTraySlotGap);
+    return trayLeft + static_cast<float>(index) * (m.traySlotSize + m.traySlotGap);
 }
 
-TaskbarLayout computeTaskbarLayout(float widthDip, float heightDip, bool showTaskView,
-                                   int appCount, int trayCount) {
+TaskbarMetrics metricsForSize(int sizeIndex) {
+    TaskbarMetrics metrics{};
+    const float scale = sizeIndex == 0 ? 0.85f : (sizeIndex == 2 ? 1.15f : 1.0f);
+    metrics.outerPadX *= scale;
+    metrics.slotSize *= scale;
+    metrics.slotGap *= scale;
+    metrics.slotRadius *= scale;
+    metrics.iconSize *= scale;
+    metrics.traySlotSize *= scale;
+    metrics.traySlotGap *= scale;
+    metrics.trayIconSize *= scale;
+    metrics.chevronWidth *= scale;
+    metrics.sectionGap *= scale;
+    metrics.clockWidth *= scale;
+    metrics.thickness *= scale;
+    return metrics;
+}
+
+TaskbarLayout computeTaskbarLayout(float widthDip, const TaskbarSettings& settings, int appCount,
+                                   int trayCount, bool showVisualizer) {
     TaskbarLayout layout{};
-    layout.showTaskView = showTaskView;
+    layout.m = metricsForSize(settings.sizeIndex);
+    layout.settings = settings;
     layout.appCount = appCount;
     layout.trayCount = trayCount;
-    layout.slotTop = (heightDip - kSlotSize) / 2.0f;
-    layout.traySlotTop = (heightDip - kTraySlotSize) / 2.0f;
-    layout.startLeft = kOuterPadX;
-    float x = kOuterPadX + kSlotSize + kSectionGap + kDividerWidth + kSectionGap;
-    layout.taskViewLeft = x;
-    if (showTaskView) {
-        x += kSlotSize + kSlotGap;
-    }
-    layout.appsStartX = x;
-    layout.clockRight = widthDip - kOuterPadX;
-    layout.clockLeft = layout.clockRight - kClockWidth;
-    layout.traySectionRight = layout.clockLeft - kSectionGap - kDividerWidth - kSectionGap;
-    layout.chevronLeft = layout.traySectionRight - kChevronWidth;
+    layout.showVisualizer = showVisualizer;
+    const TaskbarMetrics& m = layout.m;
+    layout.slotTop = (m.thickness - m.slotSize) * 0.5f;
+    layout.traySlotTop = (m.thickness - m.traySlotSize) * 0.5f;
+    layout.startLeft = m.outerPadX;
+    float x = m.outerPadX + m.slotSize;
+    const auto addShellSlot = [&](bool enabled, float& slotLeft) {
+        if (!enabled) {
+            slotLeft = -1.0f;
+            return;
+        }
+        x += m.slotGap;
+        slotLeft = x;
+        x += m.slotSize;
+    };
+    addShellSlot(settings.showTaskView, layout.taskViewLeft);
+    addShellSlot(settings.showSearch, layout.searchLeft);
+    addShellSlot(settings.showWidgets, layout.widgetsLeft);
+    addShellSlot(settings.showResume, layout.resumeLeft);
+    x += m.sectionGap + m.dividerWidth + m.sectionGap;
+    const float appsBegin = x;
+    layout.clockRight = widthDip - m.outerPadX;
+    layout.clockLeft = layout.clockRight - m.clockWidth;
+    layout.traySectionRight = layout.clockLeft - m.sectionGap - m.dividerWidth - m.sectionGap;
+    layout.chevronLeft = layout.traySectionRight - m.chevronWidth;
     const float trayTotalW =
         trayCount <= 0 ? 0.0f
-                       : static_cast<float>(trayCount) * kTraySlotSize +
-                             static_cast<float>(trayCount - 1) * kTraySlotGap + kTraySlotGap;
+                       : static_cast<float>(trayCount) * m.traySlotSize +
+                             static_cast<float>(trayCount - 1) * m.traySlotGap + m.traySlotGap;
     layout.trayLeft = layout.chevronLeft - trayTotalW;
-    layout.maxAppX = layout.trayLeft - kSectionGap - kSlotSize;
+    float appsEnd = layout.trayLeft - m.sectionGap;
+    if (showVisualizer) {
+        const float stripWidth = std::min(132.0f, std::max(0.0f, appsEnd - appsBegin - m.slotSize));
+        layout.visualizerRight = appsEnd;
+        layout.visualizerLeft = appsEnd - stripWidth;
+        appsEnd = layout.visualizerLeft - m.sectionGap;
+    } else {
+        layout.visualizerLeft = 0.0f;
+        layout.visualizerRight = 0.0f;
+    }
+    const float appRunWidth =
+        appCount <= 0 ? 0.0f
+                      : static_cast<float>(appCount) * m.slotSize +
+                            static_cast<float>(appCount - 1) * m.slotGap;
+    const float span = std::max(0.0f, appsEnd - appsBegin);
+    layout.appsStartX = appsBegin;
+    if (settings.alignment == TaskbarAlignment::Center && appRunWidth < span) {
+        layout.appsStartX = appsBegin + (span - appRunWidth) * 0.5f;
+    }
+    layout.maxAppX = appsEnd - m.slotSize;
     return layout;
 }
 
 TaskbarHit hitTestTaskbar(const TaskbarLayout& layout, float dipX, float dipY) {
-    if (dipY < layout.slotTop - 2.0f || dipY > layout.slotTop + kSlotSize + 2.0f) {
+    const TaskbarMetrics& m = layout.m;
+    if (dipY < layout.slotTop - 2.0f || dipY > layout.slotTop + m.slotSize + 2.0f) {
         return {};
     }
-    if (dipX >= layout.startLeft && dipX <= layout.startLeft + kSlotSize) {
+    const auto inSlot = [&](float left) {
+        return left >= 0.0f && dipX >= left && dipX <= left + m.slotSize;
+    };
+    if (inSlot(layout.startLeft)) {
         return {TaskbarZone::Start, -1};
     }
-    if (layout.showTaskView && dipX >= layout.taskViewLeft &&
-        dipX <= layout.taskViewLeft + kSlotSize) {
+    if (inSlot(layout.taskViewLeft)) {
         return {TaskbarZone::TaskView, -1};
+    }
+    if (inSlot(layout.searchLeft)) {
+        return {TaskbarZone::Search, -1};
+    }
+    if (inSlot(layout.widgetsLeft)) {
+        return {TaskbarZone::Widgets, -1};
+    }
+    if (inSlot(layout.resumeLeft)) {
+        return {TaskbarZone::Resume, -1};
     }
     if (dipX >= layout.clockLeft - 4.0f && dipX <= layout.clockRight + 4.0f) {
         return {TaskbarZone::Clock, -1};
@@ -74,10 +137,14 @@ TaskbarHit hitTestTaskbar(const TaskbarLayout& layout, float dipX, float dipY) {
     if (dipX >= layout.chevronLeft && dipX <= layout.traySectionRight) {
         return {TaskbarZone::TrayOverflow, -1};
     }
+    if (layout.showVisualizer && dipX >= layout.visualizerLeft &&
+        dipX <= layout.visualizerRight) {
+        return {TaskbarZone::Visualizer, -1};
+    }
     if (layout.trayCount > 0 && dipX >= layout.trayLeft && dipX < layout.chevronLeft) {
         for (int i = 0; i < layout.trayCount; ++i) {
             const float slotX = layout.traySlotX(i);
-            if (dipX >= slotX && dipX <= slotX + kTraySlotSize) {
+            if (dipX >= slotX && dipX <= slotX + m.traySlotSize) {
                 return {TaskbarZone::Tray, i};
             }
         }
@@ -87,7 +154,7 @@ TaskbarHit hitTestTaskbar(const TaskbarLayout& layout, float dipX, float dipY) {
         if (slotX > layout.maxAppX) {
             break;
         }
-        if (dipX >= slotX && dipX <= slotX + kSlotSize) {
+        if (dipX >= slotX && dipX <= slotX + m.slotSize) {
             return {TaskbarZone::App, i};
         }
     }
@@ -95,23 +162,32 @@ TaskbarHit hitTestTaskbar(const TaskbarLayout& layout, float dipX, float dipY) {
 }
 
 float taskbarSlotCenterX(const TaskbarLayout& layout, const TaskbarHit& hit) {
+    const TaskbarMetrics& m = layout.m;
     switch (hit.zone) {
     case TaskbarZone::Start:
-        return layout.startLeft + kSlotSize * 0.5f;
+        return layout.startLeft + m.slotSize * 0.5f;
     case TaskbarZone::TaskView:
-        return layout.taskViewLeft + kSlotSize * 0.5f;
+        return layout.taskViewLeft + m.slotSize * 0.5f;
+    case TaskbarZone::Search:
+        return layout.searchLeft + m.slotSize * 0.5f;
+    case TaskbarZone::Widgets:
+        return layout.widgetsLeft + m.slotSize * 0.5f;
+    case TaskbarZone::Resume:
+        return layout.resumeLeft + m.slotSize * 0.5f;
     case TaskbarZone::App:
         if (hit.index >= 0) {
-            return layout.appSlotX(hit.index) + kSlotSize * 0.5f;
+            return layout.appSlotX(hit.index) + m.slotSize * 0.5f;
         }
         break;
     case TaskbarZone::Clock:
         return (layout.clockLeft + layout.clockRight) * 0.5f;
     case TaskbarZone::TrayOverflow:
-        return layout.chevronLeft + kChevronWidth * 0.5f;
+        return layout.chevronLeft + m.chevronWidth * 0.5f;
+    case TaskbarZone::Visualizer:
+        return (layout.visualizerLeft + layout.visualizerRight) * 0.5f;
     case TaskbarZone::Tray:
         if (hit.index >= 0) {
-            return layout.traySlotX(hit.index) + kTraySlotSize * 0.5f;
+            return layout.traySlotX(hit.index) + m.traySlotSize * 0.5f;
         }
         break;
     default:
@@ -122,14 +198,15 @@ float taskbarSlotCenterX(const TaskbarLayout& layout, const TaskbarHit& hit) {
 
 int taskbarDragTargetIndex(const TaskbarLayout& layout, TaskbarZone zone, float dipX,
                            int pinnedAppCount) {
+    const TaskbarMetrics& m = layout.m;
     if (zone == TaskbarZone::App) {
         const int rawIndex = static_cast<int>(std::lround(
-            (dipX - layout.appsStartX - kSlotSize * 0.5f) / (kSlotSize + kSlotGap)));
+            (dipX - layout.appsStartX - m.slotSize * 0.5f) / (m.slotSize + m.slotGap)));
         return pinnedAppCount > 0 ? std::clamp(rawIndex, 0, pinnedAppCount - 1) : 0;
     }
     if (zone == TaskbarZone::Tray && layout.trayCount > 0) {
         const int rawIndex = static_cast<int>(std::lround(
-            (dipX - layout.trayLeft - kTraySlotSize * 0.5f) / (kTraySlotSize + kTraySlotGap)));
+            (dipX - layout.trayLeft - m.traySlotSize * 0.5f) / (m.traySlotSize + m.traySlotGap)));
         return std::clamp(rawIndex, 0, layout.trayCount - 1);
     }
     return -1;

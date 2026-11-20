@@ -18,12 +18,14 @@
  * @updated 18/11/2026
  */
 // ---------- IMPORTS
+#include "Modules/TrayAutomationReader.h"
 #include "Modules/TrayToolbarReader.h"
 #include "Core/WinResources.h"
 #include "Core/WinString.h"
 #include <CommCtrl.h>
 #include <algorithm>
 #include <unordered_set>
+
 // ---------- CONSTANTS
 namespace {
 constexpr UINT kSendTimeoutMs = 50;
@@ -190,5 +192,15 @@ std::vector<RawTrayIcon> readToolbarIcons() {
 }
 // ---------- IMPLEMENTATION
 std::vector<RawTrayIcon> readTrayIcons() {
-    return readToolbarIcons();
+    std::vector<RawTrayIcon> icons = readToolbarIcons();
+    std::unordered_set<std::wstring> seen;
+    for (const auto& icon : icons) {
+        seen.insert(icon.persistKey);
+    }
+    for (auto& icon : readAutomationTrayIcons()) {
+        if (seen.insert(icon.persistKey).second) {
+            icons.push_back(std::move(icon));
+        }
+    }
+    return icons;
 }

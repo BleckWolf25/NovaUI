@@ -1,41 +1,42 @@
 /**
  * @file TaskbarUI.cpp
  *
- * @version 1.6.0
+ * @version 1.7.0
  * @author BleckWolf25
  * @license MIT
  *
  * @summary Dock window lifetime, message routing, input policy and shell integration
  *
  * @description
- * Creates the borderless topmost dock, starts the trackers against the live shell before
- * suppressing Explorer, reserves the bottom edge through AppBar and arms the visibility guard.
- * Routes Win32 input to hover, click, middle-click, right-click and drag gestures, delegating all
- * geometry to TaskbarLayout and all drawing to paintTaskbar. Empty-area right-click opens a
- * native Taskbar settings / Task Manager menu; drops pin external targets.
+ * Snapshots the user's shell preferences and spawns the restore guard, starts the trackers
+ * against the live shell before suppressing Explorer, and reserves the configured screen edge at
+ * the thickness derived from the Windows size setting. Routes input to hover, click, middle-click,
+ * right-click and drag gestures, delegating geometry to TaskbarLayout and drawing to paintTaskbar.
+ * Empty-area right-click opens the styled glass taskbar menu; WM_SETTINGCHANGE re-reads
+ * personalization and WM_APP_VISUALIZER pulls new audio levels.
  *
  * @since 17/11/2026
- * @updated 18/11/2026
+ * @updated 20/11/2026
  */
 // ---------- IMPORTS
 #include "Modules/TaskbarUI.h"
+#include "Core/ShellRestore.h"
 #include <shellapi.h>
 #include <windowsx.h>
 #include <algorithm>
 #include <cmath>
-#include <memory>
 // ---------- CONSTANTS
 namespace {
 constexpr UINT kMsgReassert = WM_APP + 4;
-constexpr UINT_PTR kMenuSettingsId = 1;
-constexpr UINT_PTR kMenuTaskManagerId = 2;
 }
 // ---------- IMPLEMENTATION
 TaskbarUI::~TaskbarUI() {
     m_guard.stop();
+    m_visualizer.stop();
     m_tray.stop();
     m_tasks.stop();
     m_shellTaskbar.restore();
+    ShellRestore::apply();
     if (m_hwnd) {
         DestroyWindow(m_hwnd);
     }
@@ -59,7 +60,10 @@ bool TaskbarUI::start() {
     if (!m_timeFormat || !m_dateFormat) {
         return false;
     }
-    m_showTaskView = ShellTaskbar::isTaskViewEnabled();
+    m_settings = readTaskbarSettings();
+    ShellRestore::capture();
+    ShellRestore::spawnGuard(GetCurrentProcessId());
+    m_visualizer.loadConfig();
     TaskbarFlyout::Callbacks callbacks{};
     callbacks.onFocusWindow = [this](HWND target) { m_tasks.focusWindow(target); };
     callbacks.onCloseWindow = [this](HWND target) { m_tasks.closeWindow(target); };
@@ -88,7 +92,11 @@ bool TaskbarUI::start() {
     callbacks.onTrayTogglePinToBar = [this](const std::wstring& key) {
         m_tray.togglePinnedToBar(key);
     };
+    callbacks.onOpenSettings = [] { ShellTaskbar::openTaskbarSettings(); };
+    callbacks.onOpenTaskManager = [] { ShellTaskbar::openTaskManager(); };
+    callbacks.onToggleVisualizer = [this] { toggleVisualizer(); };
     m_flyout.init(m_hwnd, std::move(callbacks));
+    m_flyout.setPlacedBelowBar(m_settings.edge == TaskbarEdge::Top);
     auto iconLoader = [this](HICON icon) -> Microsoft::WRL::ComPtr<ID2D1Bitmap> {
         return m_renderer.createIconBitmap(icon);
     };
@@ -108,6 +116,9 @@ bool TaskbarUI::start() {
     m_appBar.add(m_hwnd, WM_APP_APPBAR);
     dock();
     m_guard.start(m_hwnd, kMsgReassert);
+    if (m_visualizer.enabled()) {
+        m_visualizer.start(m_hwnd);
+    }
     ShowWindow(m_hwnd, SW_SHOWNOACTIVATE);
     return true;
 }
@@ -130,7 +141,9 @@ LRESULT TaskbarUI::onMessage(UINT msg, WPARAM wp, LPARAM lp) {
         dock();
         return 0;
     case WM_SETTINGCHANGE:
-        m_showTaskView = ShellTaskbar::isTaskViewEnabled();
+        m_settings = readTaskbarSettings();
+        m_flyout.setPlacedBelowBar(m_settings.edge == TaskbarEdge::Top);
+        dock();
         InvalidateRect(m_hwnd, nullptr, FALSE);
         return 0;
     case WM_TIMECHANGE:
@@ -208,16 +221,22 @@ LRESULT TaskbarUI::onMessage(UINT msg, WPARAM wp, LPARAM lp) {
     case TaskTracker::kMsgPinsChanged:
         m_tasks.reloadPinnedApps();
         return 0;
+    case WM_APP_VISUALIZER:
+        m_visualizer.pullLevels();
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return 0;
     case kMsgReassert:
         reassertTaskbarWindow(m_hwnd);
         return 0;
     case WM_DESTROY:
         m_guard.stop();
+        m_visualizer.stop();
         m_tray.stop();
         m_tasks.stop();
         m_clock.stop();
         m_appBar.remove(m_hwnd);
         m_shellTaskbar.restore();
+        ShellRestore::apply();
         PostQuitMessage(0);
         return 0;
     default:
@@ -229,9 +248,9 @@ LRESULT TaskbarUI::onMessage(UINT msg, WPARAM wp, LPARAM lp) {
 void TaskbarUI::dock() {
     const int dpi = static_cast<int>(GetDpiForWindow(m_hwnd));
     const float scale = static_cast<float>(dpi) / static_cast<float>(USER_DEFAULT_SCREEN_DPI);
-    const int thicknessPx =
-        static_cast<int>(std::lround(static_cast<float>(kBarHeightDip) * scale));
-    const RECT rc = m_appBar.dock(m_hwnd, thicknessPx);
+    const float thicknessDip = metricsForSize(m_settings.sizeIndex).thickness;
+    const int thicknessPx = static_cast<int>(std::lround(thicknessDip * scale));
+    const RECT rc = m_appBar.dock(m_hwnd, thicknessPx, m_settings.edge);
     const int widthPx = rc.right - rc.left;
     const int heightPx = rc.bottom - rc.top;
     m_barWidthDip = static_cast<float>(widthPx) / scale;
@@ -239,9 +258,15 @@ void TaskbarUI::dock() {
 }
 
 TaskbarLayout TaskbarUI::currentLayout() const {
-    return computeTaskbarLayout(m_barWidthDip, static_cast<float>(kBarHeightDip), m_showTaskView,
+    return computeTaskbarLayout(m_barWidthDip, m_settings,
                                 static_cast<int>(m_tasks.items().size()),
-                                static_cast<int>(m_tray.pinnedItems().size()));
+                                static_cast<int>(m_tray.pinnedItems().size()),
+                                m_visualizer.enabled());
+}
+
+void TaskbarUI::toggleVisualizer() {
+    m_visualizer.setEnabled(m_hwnd, !m_visualizer.enabled());
+    InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
 int TaskbarUI::screenXFromDip(float dipX) const {
@@ -251,10 +276,10 @@ int TaskbarUI::screenXFromDip(float dipX) const {
     return rc.left + static_cast<int>(std::lround(dipX * scale));
 }
 
-int TaskbarUI::taskbarTopScreen() const {
+int TaskbarUI::barEdgeScreen() const {
     RECT rc{};
     GetWindowRect(m_hwnd, &rc);
-    return rc.top;
+    return m_settings.edge == TaskbarEdge::Top ? rc.bottom : rc.top;
 }
 
 void TaskbarUI::showHoverFlyout(const TaskbarHit& hit) {
@@ -262,27 +287,49 @@ void TaskbarUI::showHoverFlyout(const TaskbarHit& hit) {
         return;
     }
     const int anchorX = screenXFromDip(taskbarSlotCenterX(currentLayout(), hit));
-    const int barTop = taskbarTopScreen();
-    if (hit.zone == TaskbarZone::Start) {
-        m_flyout.showTooltip(anchorX, barTop, L"Start");
-    } else if (hit.zone == TaskbarZone::TaskView) {
-        m_flyout.showTooltip(anchorX, barTop, L"Task View");
-    } else if (hit.zone == TaskbarZone::TrayOverflow) {
-        m_flyout.showTooltip(anchorX, barTop, L"Show hidden icons");
-    } else if (hit.zone == TaskbarZone::Tray && hit.index >= 0 &&
-               hit.index < static_cast<int>(m_tray.pinnedItems().size())) {
-        m_flyout.showTooltip(anchorX, barTop,
-                             m_tray.pinnedItems()[static_cast<size_t>(hit.index)].tooltip);
-    } else if (hit.zone == TaskbarZone::App && hit.index >= 0 &&
-               hit.index < static_cast<int>(m_tasks.items().size())) {
-        const auto& item = m_tasks.items()[static_cast<size_t>(hit.index)];
-        if (item.windows.size() > 1) {
-            m_flyout.showWindowList(anchorX, barTop, static_cast<size_t>(hit.index), item);
-        } else {
-            m_flyout.showTooltip(anchorX, barTop, item.displayTitle());
+    const int edge = barEdgeScreen();
+    switch (hit.zone) {
+    case TaskbarZone::Start:
+        m_flyout.showTooltip(anchorX, edge, L"Start");
+        break;
+    case TaskbarZone::TaskView:
+        m_flyout.showTooltip(anchorX, edge, L"Task View");
+        break;
+    case TaskbarZone::Search:
+        m_flyout.showTooltip(anchorX, edge, L"Search");
+        break;
+    case TaskbarZone::Widgets:
+        m_flyout.showTooltip(anchorX, edge, L"Widgets");
+        break;
+    case TaskbarZone::Resume:
+        m_flyout.showTooltip(anchorX, edge, L"Resume");
+        break;
+    case TaskbarZone::Visualizer:
+        m_flyout.showTooltip(anchorX, edge, L"Music visualizer");
+        break;
+    case TaskbarZone::TrayOverflow:
+        m_flyout.showTooltip(anchorX, edge, L"Show hidden icons");
+        break;
+    case TaskbarZone::Tray:
+        if (hit.index >= 0 && hit.index < static_cast<int>(m_tray.pinnedItems().size())) {
+            m_flyout.showTooltip(anchorX, edge,
+                                 m_tray.pinnedItems()[static_cast<size_t>(hit.index)].tooltip);
         }
-    } else {
+        break;
+    case TaskbarZone::App:
+        if (hit.index >= 0 && hit.index < static_cast<int>(m_tasks.items().size())) {
+            const auto& item = m_tasks.items()[static_cast<size_t>(hit.index)];
+            if (item.windows.size() > 1) {
+                m_flyout.showWindowList(anchorX, edge, static_cast<size_t>(hit.index), item);
+            } else {
+                m_flyout.showTooltip(anchorX, edge, item.displayTitle());
+            }
+        }
+        break;
+    case TaskbarZone::Clock:
+    case TaskbarZone::None:
         m_flyout.hide();
+        break;
     }
 }
 
@@ -302,23 +349,8 @@ void TaskbarUI::showNativeSystemMenu(HWND target, int screenX, int screenY) {
     }
 }
 
-void TaskbarUI::showBarContextMenu(int screenX, int screenY) {
-    const std::unique_ptr<std::remove_pointer_t<HMENU>, decltype(&DestroyMenu)> menu(
-        CreatePopupMenu(), &DestroyMenu);
-    if (!menu) {
-        return;
-    }
-    AppendMenuW(menu.get(), MF_STRING, kMenuSettingsId, L"Taskbar settings");
-    AppendMenuW(menu.get(), MF_STRING, kMenuTaskManagerId, L"Task Manager");
-    SetForegroundWindow(m_hwnd);
-    const UINT command = TrackPopupMenu(menu.get(), TPM_RETURNCMD | TPM_RIGHTBUTTON, screenX,
-                                        screenY, 0, m_hwnd, nullptr);
-    PostMessageW(m_hwnd, WM_NULL, 0, 0);
-    if (command == kMenuSettingsId) {
-        ShellTaskbar::openTaskbarSettings();
-    } else if (command == kMenuTaskManagerId) {
-        ShellTaskbar::openTaskManager();
-    }
+void TaskbarUI::showBarContextMenu(int anchorScreenX) {
+    m_flyout.showBarContextMenu(anchorScreenX, barEdgeScreen(), m_visualizer.enabled());
 }
 
 void TaskbarUI::onMouseMove(int xPx, int yPx) {
@@ -441,6 +473,18 @@ void TaskbarUI::onLeftUp(int xPx, int yPx) {
         m_flyout.hide();
         ShellTaskbar::openTaskView();
         break;
+    case TaskbarZone::Search:
+        m_flyout.hide();
+        ShellTaskbar::openSearch();
+        break;
+    case TaskbarZone::Widgets:
+        m_flyout.hide();
+        ShellTaskbar::openWidgets();
+        break;
+    case TaskbarZone::Resume:
+        m_flyout.hide();
+        ShellTaskbar::openResume();
+        break;
     case TaskbarZone::App:
         m_flyout.hide();
         if (hit.index >= 0 && hit.index < static_cast<int>(m_tasks.items().size())) {
@@ -459,8 +503,11 @@ void TaskbarUI::onLeftUp(int xPx, int yPx) {
         } else {
             m_tray.refresh();
             m_flyout.showTrayOverflow(screenXFromDip(taskbarSlotCenterX(layout, hit)),
-                                      taskbarTopScreen(), m_tray.overflowItems());
+                                      barEdgeScreen(), m_tray.overflowItems());
         }
+        break;
+    case TaskbarZone::Visualizer:
+        showBarContextMenu(screenXFromDip(taskbarSlotCenterX(layout, hit)));
         break;
     case TaskbarZone::Clock:
         m_flyout.hide();
@@ -484,9 +531,9 @@ void TaskbarUI::onLeftDoubleClick(int xPx, int yPx) {
 
 void TaskbarUI::onRightUp(int xPx, int yPx) {
     const float scale = static_cast<float>(GetDpiForWindow(m_hwnd)) / 96.0f;
+    const float dipX = static_cast<float>(xPx) / scale;
     const TaskbarLayout layout = currentLayout();
-    const TaskbarHit hit =
-        hitTestTaskbar(layout, static_cast<float>(xPx) / scale, static_cast<float>(yPx) / scale);
+    const TaskbarHit hit = hitTestTaskbar(layout, dipX, static_cast<float>(yPx) / scale);
     if (hit.zone == TaskbarZone::App && hit.index >= 0 &&
         hit.index < static_cast<int>(m_tasks.items().size())) {
         const auto& item = m_tasks.items()[static_cast<size_t>(hit.index)];
@@ -497,7 +544,7 @@ void TaskbarUI::onRightUp(int xPx, int yPx) {
             showNativeSystemMenu(item.primaryHwnd(), pt.x, pt.y);
         } else {
             m_flyout.showAppContextMenu(screenXFromDip(taskbarSlotCenterX(layout, hit)),
-                                        taskbarTopScreen(), static_cast<size_t>(hit.index), item,
+                                        barEdgeScreen(), static_cast<size_t>(hit.index), item,
                                         m_tasks.canPin(item));
         }
         return;
@@ -508,11 +555,9 @@ void TaskbarUI::onRightUp(int xPx, int yPx) {
         m_tray.rightClick(m_tray.pinnedItems()[static_cast<size_t>(hit.index)]);
         return;
     }
-    if (hit.zone == TaskbarZone::None) {
+    if (hit.zone == TaskbarZone::None || hit.zone == TaskbarZone::Visualizer) {
         m_flyout.hide();
-        POINT pt{xPx, yPx};
-        ClientToScreen(m_hwnd, &pt);
-        showBarContextMenu(pt.x, pt.y);
+        showBarContextMenu(screenXFromDip(dipX));
     }
 }
 
@@ -532,6 +577,8 @@ void TaskbarUI::onMiddleUp(int xPx, int yPx) {
                hit.index < static_cast<int>(m_tray.pinnedItems().size())) {
         m_tray.setPinnedToBar(m_tray.pinnedItems()[static_cast<size_t>(hit.index)].persistKey,
                               false);
+    } else if (hit.zone == TaskbarZone::Visualizer) {
+        toggleVisualizer();
     }
 }
 
@@ -542,6 +589,7 @@ void TaskbarUI::paint() {
     state.layout = currentLayout();
     state.apps = std::span<const TaskItem>(m_tasks.items());
     state.tray = std::span<const TrayItem>(m_tray.pinnedItems());
+    state.visualizerLevels = std::span<const float>(m_visualizer.levels());
     state.hover = m_hover;
     state.trayOverflowOpen = (m_flyout.mode() == TaskbarFlyout::Mode::TrayOverflow);
     state.dragging = m_dragging;

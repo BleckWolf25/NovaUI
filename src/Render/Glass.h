@@ -1,7 +1,7 @@
 /**
  * @file Glass.h
  *
- * @version 1.0.0
+ * @version 1.1.0
  * @author BleckWolf25
  * @license MIT
  *
@@ -15,7 +15,7 @@
  * ID2D1GeometrySink for the crystalline Start emblem.
  *
  * @since 18/11/2026
- * @updated 18/11/2026
+ * @updated 20/11/2026
  */
 #pragma once
 // ---------- IMPORTS
@@ -46,6 +46,9 @@ inline constexpr D2D1_COLOR_F kAccentGlow{0.46f, 0.78f, 1.0f, 0.30f};
 inline constexpr D2D1_COLOR_F kText{1.0f, 1.0f, 1.0f, 0.97f};
 inline constexpr D2D1_COLOR_F kTextShadow{0.0f, 0.0f, 0.0f, 0.45f};
 inline constexpr D2D1_COLOR_F kMuted{1.0f, 1.0f, 1.0f, 0.70f};
+inline constexpr D2D1_COLOR_F kAttentionFill{0.98f, 0.62f, 0.24f, 0.22f};
+inline constexpr D2D1_COLOR_F kAttentionRim{0.98f, 0.72f, 0.36f, 0.55f};
+inline constexpr D2D1_COLOR_F kBadgeFill{0.98f, 0.42f, 0.30f, 0.95f};
 }
 // ---------- DECLARATIONS
 Microsoft::WRL::ComPtr<ID2D1PathGeometry> createAsymmetricRoundRect(

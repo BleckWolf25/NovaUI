@@ -1,7 +1,7 @@
 /**
  * @file ShellTaskbar.h
  *
- * @version 1.2.0
+ * @version 1.3.0
  * @author BleckWolf25
  * @license MIT
  *
@@ -16,7 +16,7 @@
  * one-shot read of the ShowTaskViewButton personalization setting.
  *
  * @since 17/11/2026
- * @updated 18/11/2026
+ * @updated 20/11/2026
  */
 #pragma once
 // ---------- IMPORTS
@@ -37,6 +37,9 @@ public:
     static void openTaskbarSettings();
     static void openTaskManager();
     static bool isTaskViewEnabled();
+    static void openSearch();
+    static void openWidgets();
+    static void openResume();
 private:
     static void hideAllTrays();
     static void showAllTrays();

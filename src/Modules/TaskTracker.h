@@ -1,7 +1,7 @@
 /**
  * @file TaskTracker.h
  *
- * @version 1.4.0
+ * @version 1.5.0
  * @author BleckWolf25
  * @license MIT
  *
@@ -11,10 +11,11 @@
  * Enumerates eligible top-level windows, groups them against Explorer's pinned shortcuts and
  * preserves stable slot order across focus switches. Identity comes from WindowIdentity, pin
  * metadata and ordering from ShortcutStore, folder change notification from PinFolderWatcher and
- * icon decoding from caller-supplied loaders. Rebuilds only on shell WinEvents, never on a timer.
+ * icon decoding from caller-supplied loaders. EVENT_SYSTEM_ALERT marks a group as needing
+ * attention until it takes foreground. Rebuilds only on shell WinEvents, never on a timer.
  *
  * @since 17/11/2026
- * @updated 18/11/2026
+ * @updated 20/11/2026
  */
 #pragma once
 // ---------- IMPORTS
@@ -24,6 +25,7 @@
 #include <wrl/client.h>
 #include <functional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 // ---------- TYPES
 struct WindowEntry {
@@ -44,6 +46,7 @@ struct TaskItem {
     bool active = false;
     bool running = false;
     bool pinned = false;
+    bool attention = false;
     HWND primaryHwnd() const noexcept {
         if (windows.empty()) {
             return nullptr;
@@ -99,7 +102,6 @@ private:
     void savePinOrder() const;
     Microsoft::WRL::ComPtr<ID2D1Bitmap> loadIconForWindow(HWND hwnd) const;
     Microsoft::WRL::ComPtr<ID2D1Bitmap> loadIconForShortcut(const std::wstring& shortcutPath) const;
-    static BOOL CALLBACK enumWindowsProc(HWND hwnd, LPARAM lp);
     static void CALLBACK onWinEvent(HWINEVENTHOOK hook, DWORD event, HWND hwnd, LONG idObject,
                                     LONG idChild, DWORD eventThread, DWORD eventTime);
     HWND m_selfHwnd = nullptr;
@@ -109,6 +111,7 @@ private:
     std::vector<PinnedEntry> m_pinned;
     std::vector<TaskItem> m_items;
     std::vector<HWINEVENTHOOK> m_hooks;
+    std::unordered_set<HWND> m_attentionWindows;
     PinFolderWatcher m_watcher;
     static TaskTracker* s_instance;
 };

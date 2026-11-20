@@ -1,7 +1,7 @@
 /**
  * @file TaskTracker.cpp
  *
- * @version 1.4.0
+ * @version 1.5.0
  * @author BleckWolf25
  * @license MIT
  *
@@ -11,12 +11,13 @@
  * Builds pinned slots first by matching each shortcut's key against running window identities,
  * then groups the remaining windows by application key while preserving their previous slot
  * positions so icons never jump on focus change. Icons are cached per key across rebuilds and
- * extracted through WM_GETICON, class icons or the executable image. Activation toggles minimize
- * for a single foreground window and cycles within a group. All rebuilds are triggered by
- * WinEvents or pin folder notifications.
+ * extracted through WM_GETICON, class icons or the executable image. EVENT_SYSTEM_ALERT records
+ * the flashing window so its group carries an attention flag until it gains foreground or is
+ * destroyed. Activation toggles minimize for a single foreground window and cycles within a
+ * group. All rebuilds are triggered by WinEvents or pin folder notifications.
  *
  * @since 17/11/2026
- * @updated 18/11/2026
+ * @updated 20/11/2026
  */
 // ---------- IMPORTS
 #include "Modules/TaskTracker.h"
@@ -55,6 +56,7 @@ void TaskTracker::start(HWND selfHwnd, IconLoader iconLoader, HBitmapLoader hbit
         {EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_NAMECHANGE},
         {EVENT_OBJECT_CLOAKED, EVENT_OBJECT_UNCLOAKED},
         {EVENT_SYSTEM_DESKTOPSWITCH, EVENT_SYSTEM_DESKTOPSWITCH},
+        {EVENT_SYSTEM_ALERT, EVENT_SYSTEM_ALERT},
     };
     for (const auto& range : ranges) {
         if (HWINEVENTHOOK hook = SetWinEventHook(range[0], range[1], nullptr,
@@ -74,6 +76,7 @@ void TaskTracker::stop() {
     m_hooks.clear();
     m_items.clear();
     m_pinned.clear();
+    m_attentionWindows.clear();
     if (s_instance == this) {
         s_instance = nullptr;
     }
@@ -195,6 +198,7 @@ void TaskTracker::refresh() {
                pin.targetPathLower == raw.identity.exePathLower;
     };
     const HWND foreground = GetForegroundWindow();
+    m_attentionWindows.erase(foreground);
     for (const auto& pin : m_pinned) {
         TaskItem item{};
         item.key = pin.key;
@@ -224,6 +228,7 @@ void TaskTracker::refresh() {
                 item.appUserModelId = raw.identity.aumid;
             }
             item.windows.push_back(std::move(entry));
+            item.attention = item.attention || m_attentionWindows.contains(raw.hwnd);
         }
         if (!item.windows.empty()) {
             item.running = true;
@@ -273,6 +278,7 @@ void TaskTracker::refresh() {
             group->activeWindowIndex = group->windows.size();
         }
         group->windows.push_back(std::move(entry));
+        group->attention = group->attention || m_attentionWindows.contains(raw.hwnd);
     }
     std::unordered_map<std::wstring, size_t> unpinnedRank;
     for (size_t i = 0; i < previousUnpinnedOrder.size(); ++i) {
@@ -527,12 +533,22 @@ void CALLBACK TaskTracker::onWinEvent(HWINEVENTHOOK, DWORD event, HWND hwnd, LON
     if (!s_instance || !hwnd) {
         return;
     }
+    if (event == EVENT_SYSTEM_ALERT) {
+        if (isTaskbarWindow(hwnd, s_instance->m_selfHwnd)) {
+            s_instance->m_attentionWindows.insert(hwnd);
+            s_instance->refresh();
+        }
+        return;
+    }
     if (event == EVENT_SYSTEM_DESKTOPSWITCH) {
         s_instance->refresh();
         return;
     }
     if (idObject != OBJID_WINDOW || idChild != CHILDID_SELF) {
         return;
+    }
+    if (event == EVENT_OBJECT_DESTROY || event == EVENT_OBJECT_HIDE) {
+        s_instance->m_attentionWindows.erase(hwnd);
     }
     if (event == EVENT_SYSTEM_FOREGROUND || event == EVENT_OBJECT_DESTROY ||
         event == EVENT_OBJECT_HIDE || event == EVENT_OBJECT_CLOAKED ||

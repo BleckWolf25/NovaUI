@@ -34,16 +34,23 @@ bool AppBar::add(HWND hwnd, UINT callbackMessage) {
     m_registered = SHAppBarMessage(ABM_NEW, &abd) != FALSE;
     return m_registered;
 }
-RECT AppBar::dock(HWND hwnd, int thickness) {
+RECT AppBar::dock(HWND hwnd, int thickness, TaskbarEdge edge) {
     MONITORINFO mi{};
     mi.cbSize = sizeof(mi);
     GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &mi);
     APPBARDATA abd = makeData(hwnd);
-    abd.uEdge = ABE_BOTTOM;
     abd.rc = mi.rcMonitor;
-    abd.rc.top = abd.rc.bottom - thickness;
-    SHAppBarMessage(ABM_QUERYPOS, &abd);
-    abd.rc.top = abd.rc.bottom - thickness;
+    if (edge == TaskbarEdge::Top) {
+        abd.uEdge = ABE_TOP;
+        abd.rc.bottom = abd.rc.top + thickness;
+        SHAppBarMessage(ABM_QUERYPOS, &abd);
+        abd.rc.bottom = abd.rc.top + thickness;
+    } else {
+        abd.uEdge = ABE_BOTTOM;
+        abd.rc.top = abd.rc.bottom - thickness;
+        SHAppBarMessage(ABM_QUERYPOS, &abd);
+        abd.rc.top = abd.rc.bottom - thickness;
+    }
     SHAppBarMessage(ABM_SETPOS, &abd);
     return abd.rc;
 }

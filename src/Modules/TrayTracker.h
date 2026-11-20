@@ -35,6 +35,7 @@ struct TrayItem {
     std::wstring tooltip;
     Microsoft::WRL::ComPtr<ID2D1Bitmap> icon;
     bool pinnedToBar = false;
+    bool automation = false;
 };
 // ---------- DECLARATIONS
 class TrayTracker {

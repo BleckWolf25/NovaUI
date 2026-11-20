@@ -1,27 +1,30 @@
 /**
  * @file TaskbarUI.h
  *
- * @version 1.6.0
+ * @version 1.7.0
  * @author BleckWolf25
  * @license MIT
  *
  * @summary Floating Liquid Glass dock replacing the native Windows taskbar
  *
  * @description
- * Owns the dock window and wires the shell together: ShellTaskbar suppression, AppBar edge
- * reservation, the task and tray trackers, the clock, the flyout and the visibility guard.
- * Geometry comes from TaskbarLayout, frames from paintTaskbar and shell shortcuts from
- * ShellTaskbar, so this type holds only window lifetime, message routing and input policy.
+ * Owns the dock window and wires the shell together: preference snapshot and restore guard,
+ * ShellTaskbar suppression, AppBar reservation on the user's configured edge, the task and tray
+ * trackers, the clock, the flyout, the visibility guard and the optional music visualizer.
+ * Windows personalization drives metrics, alignment and which shell slots appear; geometry comes
+ * from TaskbarLayout and frames from paintTaskbar.
  *
  * @since 17/11/2026
- * @updated 18/11/2026
+ * @updated 20/11/2026
  */
 #pragma once
 // ---------- IMPORTS
 #include "Core/AppBar.h"
 #include "Core/ShellTaskbar.h"
+#include "Core/TaskbarSettings.h"
 #include "Core/Window.h"
 #include "Modules/ClockWidget.h"
+#include "Modules/MusicVisualizer.h"
 #include "Modules/TaskTracker.h"
 #include "Modules/TaskbarFlyout.h"
 #include "Modules/TaskbarGuard.h"
@@ -39,9 +42,10 @@ protected:
 private:
     TaskbarLayout currentLayout() const;
     void dock();
-    void showBarContextMenu(int screenX, int screenY);
+    void toggleVisualizer();
+    void showBarContextMenu(int anchorScreenX);
     int screenXFromDip(float dipX) const;
-    int taskbarTopScreen() const;
+    int barEdgeScreen() const;
     void showHoverFlyout(const TaskbarHit& hit);
     void showNativeSystemMenu(HWND target, int screenX, int screenY);
     void onMouseMove(int xPx, int yPx);
@@ -59,10 +63,11 @@ private:
     TaskbarFlyout m_flyout;
     ClockWidget m_clock;
     TaskbarGuard m_guard;
+    MusicVisualizer m_visualizer;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_timeFormat;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_dateFormat;
+    TaskbarSettings m_settings{};
     float m_barWidthDip = 0.0f;
-    bool m_showTaskView = true;
     TaskbarHit m_hover{};
     bool m_trackingMouse = false;
     bool m_pointerDown = false;

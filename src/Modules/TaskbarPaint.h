@@ -1,18 +1,18 @@
 /**
  * @file TaskbarPaint.h
  *
- * @version 1.0.0
+ * @version 1.1.0
  * @author BleckWolf25
  * @license MIT
  *
- * @summary Direct2D painting of the dock body, lenses, emblems, indicators and clock
+ * @summary Direct2D painting of the dock body, shell glyphs, lenses, indicators and clock
  *
  * @description
- * Renders one dock frame from an immutable TaskbarPaintState: the shared layout, spans over the
- * current app and tray items, hover and drag state, and the clock strings with their cached
- * IDWriteTextFormat objects. Draws through Renderer::draw into the premultiplied composition
- * swap chain and returns its HRESULT so the caller can react to device loss. Allocates nothing
- * beyond the transient gradient brushes the renderer requires.
+ * Renders one dock frame from an immutable TaskbarPaintState: the shared layout carrying the
+ * Windows settings and scaled metrics, spans over the app, tray and visualizer data, hover and
+ * drag state, and the clock strings with their cached IDWriteTextFormat objects. Badge and
+ * attention rendering are gated by the user's taskbar settings. Returns the renderer HRESULT so
+ * the caller can react to device loss.
  *
  * @since 18/11/2026
  * @updated 18/11/2026
@@ -30,6 +30,7 @@ struct TaskbarPaintState {
     TaskbarLayout layout{};
     std::span<const TaskItem> apps;
     std::span<const TrayItem> tray;
+    std::span<const float> visualizerLevels;
     TaskbarHit hover{};
     bool trayOverflowOpen = false;
     bool dragging = false;

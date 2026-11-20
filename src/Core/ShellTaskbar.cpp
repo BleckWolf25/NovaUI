@@ -1,7 +1,7 @@
 /**
  * @file ShellTaskbar.cpp
  *
- * @version 1.2.0
+ * @version 1.3.0
  * @author BleckWolf25
  * @license MIT
  *
@@ -15,7 +15,7 @@
  * synthesized with SendInput or launched through ShellExecuteW.
  *
  * @since 17/11/2026
- * @updated 18/11/2026
+ * @updated 20/11/2026
  */
 // ---------- IMPORTS
 #include "Core/ShellTaskbar.h"
@@ -122,6 +122,18 @@ void ShellTaskbar::openTaskbarSettings() {
 
 void ShellTaskbar::openTaskManager() {
     launchUri(L"taskmgr.exe");
+}
+
+void ShellTaskbar::openSearch() {
+    sendChord(VK_LWIN, 'S');
+}
+
+void ShellTaskbar::openWidgets() {
+    sendChord(VK_LWIN, 'W');
+}
+
+void ShellTaskbar::openResume() {
+    launchUri(L"shell:AppsFolder");
 }
 
 bool ShellTaskbar::isTaskViewEnabled() {

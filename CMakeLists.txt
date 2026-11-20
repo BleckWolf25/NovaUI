@@ -42,6 +42,10 @@ add_executable(NovaUI WIN32
     src/Modules/TaskbarGuard.cpp
     src/Modules/TaskTracker.cpp
     src/Modules/WindowIdentity.cpp
+    src/Core/TaskbarSettings.cpp
+    src/Core/ShellRestore.cpp
+    src/Modules/TrayAutomationReader.cpp
+    src/Modules/MusicVisualizer.cpp
     src/Modules/ShortcutStore.cpp
     src/Modules/PinFolderWatcher.cpp
     src/Modules/TrayTracker.cpp
@@ -69,4 +73,5 @@ target_link_libraries(NovaUI PRIVATE
     uuid
     user32
     ole32
+    oleaut32
 )

@@ -1,40 +1,41 @@
 /**
  * @file TaskbarFlyout.cpp
  *
- * @version 1.2.0
+ * @version 1.4.0
  * @author BleckWolf25
  * @license MIT
  *
  * @summary Implementation of the blur-free glass flyout popup window
  *
  * @description
- * Renders crisp, ultra-transparent glass popups above the taskbar without blur. Interactive
- * modes arm a FlyoutDismissHook that posts WM_APP_FLYOUT_DISMISS when the pointer leaves the
- * popup/taskbar region or clicks outside, and focus loss (WM_ACTIVATE == WA_INACTIVE) also
- * dismisses. Routes clicks to window management, app pinning, or system tray applications.
+ * Renders ultra-transparent glass popups anchored to the dock edge, above a bottom bar or below
+ * a top bar. Menu rows carry vector glyphs drawn with Direct2D so no icon assets are loaded.
+ * Interactive modes arm a FlyoutDismissHook and also dismiss on focus loss, and clicks route to
+ * window management, pinning, tray activation or the taskbar menu actions.
  *
  * @since 17/11/2026
- * @updated 18/11/2026
+ * @updated 20/11/2026
  */
 // ---------- IMPORTS
 #include "Modules/TaskbarFlyout.h"
-
+#include <iterator>
 #include <windowsx.h>
 #include <algorithm>
 #include <cmath>
-
 // ---------- CONSTANTS
 namespace {
-constexpr float kGapAboveBarDip = 8.0f;
+constexpr float kGapFromBarDip = 8.0f;
 constexpr float kCornerRadius = 12.0f;
 constexpr float kPadX = 10.0f;
 constexpr float kPadY = 8.0f;
 constexpr float kRowHeight = 32.0f;
+constexpr float kHeaderHeight = 22.0f;
+constexpr float kGlyphSize = 16.0f;
+constexpr float kLabelInset = 34.0f;
 constexpr float kTrayCellSize = 40.0f;
 constexpr float kTrayCellGap = 6.0f;
 constexpr int kTrayCols = 4;
 
-// Ultra-sheer blur-free dark glass palette
 constexpr D2D1_COLOR_F kBgTint{0.05f, 0.065f, 0.09f, 0.72f};
 constexpr D2D1_COLOR_F kSheenTop{1.0f, 1.0f, 1.0f, 0.09f};
 constexpr D2D1_COLOR_F kSheenMid{1.0f, 1.0f, 1.0f, 0.01f};
@@ -47,7 +48,6 @@ constexpr D2D1_COLOR_F kAccent{0.46f, 0.78f, 1.0f, 1.0f};
 constexpr D2D1_COLOR_F kText{1.0f, 1.0f, 1.0f, 0.96f};
 constexpr D2D1_COLOR_F kMuted{1.0f, 1.0f, 1.0f, 0.65f};
 }
-
 // ---------- IMPLEMENTATION
 TaskbarFlyout::~TaskbarFlyout() {
     m_dismiss.disarm();
@@ -59,29 +59,91 @@ TaskbarFlyout::~TaskbarFlyout() {
 bool TaskbarFlyout::init(HWND taskbarHwnd, Callbacks callbacks) {
     m_taskbarHwnd = taskbarHwnd;
     m_callbacks = std::move(callbacks);
-
     constexpr DWORD exStyle = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOREDIRECTIONBITMAP;
     if (!create(L"NovaUI.Flyout", WS_POPUP, exStyle)) {
         return false;
     }
     applyBackdrop();
-
     if (FAILED(m_renderer.init(m_hwnd))) {
         return false;
     }
     m_renderer.setDpi(static_cast<float>(GetDpiForWindow(m_hwnd)));
-
     m_titleFormat =
         m_renderer.createFormat(11.5f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING);
     m_itemFormat =
         m_renderer.createFormat(12.5f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING);
     m_badgeFormat =
         m_renderer.createFormat(10.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER);
-
     return m_titleFormat && m_itemFormat && m_badgeFormat;
 }
 
-void TaskbarFlyout::showTooltip(int anchorCenterXScreen, int taskbarTopScreen,
+void TaskbarFlyout::drawMenuGlyph(ID2D1DeviceContext& dc, Renderer& renderer,
+                                  MenuAction::Kind kind, const D2D1_RECT_F& rect,
+                                  const D2D1_COLOR_F& tint) {
+    ID2D1SolidColorBrush* brush = renderer.brush(tint);
+    const float cx = (rect.left + rect.right) * 0.5f;
+    const float cy = (rect.top + rect.bottom) * 0.5f;
+    switch (kind) {
+    case MenuAction::Kind::LaunchNew:
+        dc.DrawRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(rect.left, rect.top + 1.0f, rect.right - 3.0f,
+                                          rect.bottom - 3.0f),
+                              2.0f, 2.0f),
+            brush, 1.2f);
+        dc.DrawLine(D2D1::Point2F(rect.right - 4.0f, rect.bottom - 1.0f),
+                    D2D1::Point2F(rect.right, rect.bottom - 1.0f), brush, 1.4f);
+        dc.DrawLine(D2D1::Point2F(rect.right - 2.0f, rect.bottom - 3.0f),
+                    D2D1::Point2F(rect.right - 2.0f, rect.bottom + 1.0f), brush, 1.4f);
+        break;
+    case MenuAction::Kind::TogglePin:
+        dc.DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy - 2.5f), 4.0f, 4.0f), brush, 1.3f);
+        dc.DrawLine(D2D1::Point2F(cx, cy + 1.5f), D2D1::Point2F(cx, rect.bottom), brush, 1.4f);
+        break;
+    case MenuAction::Kind::CloseAll:
+        dc.DrawLine(D2D1::Point2F(rect.left + 2.0f, rect.top + 2.0f),
+                    D2D1::Point2F(rect.right - 2.0f, rect.bottom - 2.0f), brush, 1.5f);
+        dc.DrawLine(D2D1::Point2F(rect.right - 2.0f, rect.top + 2.0f),
+                    D2D1::Point2F(rect.left + 2.0f, rect.bottom - 2.0f), brush, 1.5f);
+        break;
+    case MenuAction::Kind::Settings:
+        dc.DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), 3.2f, 3.2f), brush, 1.3f);
+        dc.DrawLine(D2D1::Point2F(cx, rect.top), D2D1::Point2F(cx, rect.top + 2.5f), brush, 1.3f);
+        dc.DrawLine(D2D1::Point2F(cx, rect.bottom - 2.5f), D2D1::Point2F(cx, rect.bottom), brush,
+                    1.3f);
+        dc.DrawLine(D2D1::Point2F(rect.left, cy), D2D1::Point2F(rect.left + 2.5f, cy), brush,
+                    1.3f);
+        dc.DrawLine(D2D1::Point2F(rect.right - 2.5f, cy), D2D1::Point2F(rect.right, cy), brush,
+                    1.3f);
+        break;
+    case MenuAction::Kind::TaskManager:
+        dc.DrawRoundedRectangle(D2D1::RoundedRect(rect, 2.0f, 2.0f), brush, 1.2f);
+        dc.FillRectangle(D2D1::RectF(rect.left + 3.0f, cy + 1.0f, rect.left + 5.0f,
+                                     rect.bottom - 3.0f),
+                         brush);
+        dc.FillRectangle(D2D1::RectF(cx - 1.0f, cy - 3.0f, cx + 1.0f, rect.bottom - 3.0f), brush);
+        dc.FillRectangle(D2D1::RectF(rect.right - 5.0f, cy - 1.0f, rect.right - 3.0f,
+                                     rect.bottom - 3.0f),
+                         brush);
+        break;
+    case MenuAction::Kind::Visualizer:
+        dc.FillRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(rect.left + 1.0f, cy, rect.left + 3.5f, rect.bottom),
+                              1.0f, 1.0f),
+            brush);
+        dc.FillRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(cx - 1.25f, rect.top, cx + 1.25f, rect.bottom), 1.0f,
+                              1.0f),
+            brush);
+        dc.FillRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(rect.right - 3.5f, cy - 3.0f, rect.right - 1.0f,
+                                          rect.bottom),
+                              1.0f, 1.0f),
+            brush);
+        break;
+    }
+}
+
+void TaskbarFlyout::showTooltip(int anchorCenterXScreen, int barEdgeScreen,
                                 const std::wstring& text) {
     if (text.empty()) {
         hide();
@@ -90,15 +152,12 @@ void TaskbarFlyout::showTooltip(int anchorCenterXScreen, int taskbarTopScreen,
     m_mode = Mode::Tooltip;
     m_tooltipText = text;
     m_hoverRow = -1;
-
     const float estChars = static_cast<float>(std::min<size_t>(text.size(), 44));
     const float widthDip = std::clamp(estChars * 6.8f + 24.0f, 84.0f, 320.0f);
-    const float heightDip = 30.0f;
-
-    positionAndShow(anchorCenterXScreen, taskbarTopScreen, widthDip, heightDip, false);
+    positionAndShow(anchorCenterXScreen, barEdgeScreen, widthDip, 30.0f, false);
 }
 
-void TaskbarFlyout::showWindowList(int anchorCenterXScreen, int taskbarTopScreen, size_t appIndex,
+void TaskbarFlyout::showWindowList(int anchorCenterXScreen, int barEdgeScreen, size_t appIndex,
                                    const TaskItem& item) {
     m_mode = Mode::WindowList;
     m_appIndex = appIndex;
@@ -106,22 +165,28 @@ void TaskbarFlyout::showWindowList(int anchorCenterXScreen, int taskbarTopScreen
     m_windows = item.windows;
     m_hoverRow = -1;
     m_hoverCloseBtn = false;
-
-    const float widthDip = 256.0f;
     const float heightDip =
-        kPadY * 2.0f + 22.0f + static_cast<float>(m_windows.size()) * kRowHeight;
-
-    positionAndShow(anchorCenterXScreen, taskbarTopScreen, widthDip, heightDip, false);
+        kPadY * 2.0f + kHeaderHeight + static_cast<float>(m_windows.size()) * kRowHeight;
+    positionAndShow(anchorCenterXScreen, barEdgeScreen, 256.0f, heightDip, false);
 }
 
-void TaskbarFlyout::showAppContextMenu(int anchorCenterXScreen, int taskbarTopScreen,
-                                       size_t appIndex, const TaskItem& item, bool canPin) {
+void TaskbarFlyout::showMenuRows(int anchorCenterXScreen, int barEdgeScreen, float widthDip) {
+    if (m_menuActions.empty()) {
+        hide();
+        return;
+    }
+    const float heightDip =
+        kPadY * 2.0f + kHeaderHeight + static_cast<float>(m_menuActions.size()) * kRowHeight;
+    positionAndShow(anchorCenterXScreen, barEdgeScreen, widthDip, heightDip, true);
+}
+
+void TaskbarFlyout::showAppContextMenu(int anchorCenterXScreen, int barEdgeScreen, size_t appIndex,
+                                       const TaskItem& item, bool canPin) {
     m_mode = Mode::AppContextMenu;
     m_appIndex = appIndex;
     m_headerTitle = item.appName;
     m_menuActions.clear();
     m_hoverRow = -1;
-
     if (!item.shortcutPath.empty() || !item.targetPath.empty()) {
         m_menuActions.push_back(
             {MenuAction::Kind::LaunchNew, item.running ? L"Open new window" : L"Open"});
@@ -132,41 +197,42 @@ void TaskbarFlyout::showAppContextMenu(int anchorCenterXScreen, int taskbarTopSc
         m_menuActions.push_back({MenuAction::Kind::TogglePin, L"Pin to taskbar"});
     }
     if (item.running) {
-        m_menuActions.push_back(
-            {MenuAction::Kind::CloseAll,
-             item.windows.size() > 1 ? L"Close all windows" : L"Close window"});
+        m_menuActions.push_back({MenuAction::Kind::CloseAll,
+                                 item.windows.size() > 1 ? L"Close all windows" : L"Close window"});
     }
-
-    if (m_menuActions.empty()) {
-        hide();
-        return;
-    }
-
-    const float widthDip = 204.0f;
-    const float heightDip =
-        kPadY * 2.0f + 22.0f + static_cast<float>(m_menuActions.size()) * kRowHeight;
-
-    positionAndShow(anchorCenterXScreen, taskbarTopScreen, widthDip, heightDip, true);
+    showMenuRows(anchorCenterXScreen, barEdgeScreen, 228.0f);
 }
 
-void TaskbarFlyout::showTrayOverflow(int anchorCenterXScreen, int taskbarTopScreen,
+void TaskbarFlyout::showBarContextMenu(int anchorCenterXScreen, int barEdgeScreen,
+                                       bool visualizerEnabled) {
+    m_mode = Mode::BarMenu;
+    m_appIndex = 0;
+    m_headerTitle = L"Taskbar";
+    m_menuActions.clear();
+    m_hoverRow = -1;
+    m_menuActions.push_back({MenuAction::Kind::Settings, L"Taskbar settings"});
+    m_menuActions.push_back({MenuAction::Kind::TaskManager, L"Task Manager"});
+    m_menuActions.push_back(
+        {MenuAction::Kind::Visualizer, visualizerEnabled ? L"Hide music visualizer"
+                                                        : L"Show music visualizer"});
+    showMenuRows(anchorCenterXScreen, barEdgeScreen, 236.0f);
+}
+
+void TaskbarFlyout::showTrayOverflow(int anchorCenterXScreen, int barEdgeScreen,
                                      const std::vector<TrayItem>& overflowItems) {
     m_mode = Mode::TrayOverflow;
     m_trayItems = overflowItems;
     m_hoverRow = -1;
     m_hoverPinBtn = false;
-
     const int count = std::max(1, static_cast<int>(m_trayItems.size()));
     const int cols = std::min(kTrayCols, count);
     const int rows = (count + kTrayCols - 1) / kTrayCols;
-
     const float gridW =
         static_cast<float>(cols) * kTrayCellSize + static_cast<float>(cols - 1) * kTrayCellGap;
     const float widthDip = std::max(176.0f, kPadX * 2.0f + gridW);
     const float heightDip = kPadY * 2.0f + 24.0f + static_cast<float>(rows) * kTrayCellSize +
                             static_cast<float>(std::max(0, rows - 1)) * kTrayCellGap;
-
-    positionAndShow(anchorCenterXScreen, taskbarTopScreen, widthDip, heightDip, true);
+    positionAndShow(anchorCenterXScreen, barEdgeScreen, widthDip, heightDip, true);
 }
 
 void TaskbarFlyout::hide() {
@@ -233,27 +299,25 @@ LRESULT TaskbarFlyout::onMessage(UINT msg, WPARAM wp, LPARAM lp) {
     return Window::onMessage(msg, wp, lp);
 }
 
-void TaskbarFlyout::positionAndShow(int anchorCenterXScreen, int taskbarTopScreen, float widthDip,
+void TaskbarFlyout::positionAndShow(int anchorCenterXScreen, int barEdgeScreen, float widthDip,
                                     float heightDip, bool activate) {
     const HMONITOR mon =
-        MonitorFromPoint(POINT{anchorCenterXScreen, taskbarTopScreen}, MONITOR_DEFAULTTOPRIMARY);
+        MonitorFromPoint(POINT{anchorCenterXScreen, barEdgeScreen}, MONITOR_DEFAULTTOPRIMARY);
     MONITORINFO mi{};
     mi.cbSize = sizeof(mi);
     GetMonitorInfoW(mon, &mi);
-
     const UINT dpi = GetDpiForWindow(m_taskbarHwnd ? m_taskbarHwnd : m_hwnd);
     m_renderer.setDpi(static_cast<float>(dpi));
     const float scale = static_cast<float>(dpi) / 96.0f;
-
     const int widthPx = static_cast<int>(std::lround(widthDip * scale));
     const int heightPx = static_cast<int>(std::lround(heightDip * scale));
-    const int gapPx = static_cast<int>(std::lround(kGapAboveBarDip * scale));
-
+    const int gapPx = static_cast<int>(std::lround(kGapFromBarDip * scale));
     int leftPx = anchorCenterXScreen - widthPx / 2;
-    leftPx = std::clamp(leftPx, static_cast<int>(mi.rcWork.left) + 6,
-                        static_cast<int>(mi.rcWork.right) - widthPx - 6);
-    const int topPx = taskbarTopScreen - heightPx - gapPx;
-
+    leftPx = std::clamp(leftPx, static_cast<int>(mi.rcMonitor.left) + 6,
+                        static_cast<int>(mi.rcMonitor.right) - widthPx - 6);
+    int topPx = m_belowBar ? barEdgeScreen + gapPx : barEdgeScreen - heightPx - gapPx;
+    topPx = std::clamp(topPx, static_cast<int>(mi.rcMonitor.top) + 6,
+                       static_cast<int>(mi.rcMonitor.bottom) - heightPx - 6);
     SetWindowPos(m_hwnd, HWND_TOPMOST, leftPx, topPx, widthPx, heightPx,
                  activate ? SWP_SHOWWINDOW : (SWP_NOACTIVATE | SWP_SHOWWINDOW));
     if (activate) {
@@ -276,21 +340,17 @@ void TaskbarFlyout::onMouseMove(int xPx, int yPx) {
         TrackMouseEvent(&tme);
         m_trackingMouse = true;
     }
-
     const float scale = static_cast<float>(GetDpiForWindow(m_hwnd)) / 96.0f;
     const float dipX = static_cast<float>(xPx) / scale;
     const float dipY = static_cast<float>(yPx) / scale;
-
     RECT rc{};
     GetClientRect(m_hwnd, &rc);
     const float widthDip = static_cast<float>(rc.right - rc.left) / scale;
-
     int nextRow = -1;
     bool nextClose = false;
     bool nextPin = false;
-
-    if (m_mode == Mode::WindowList || m_mode == Mode::AppContextMenu) {
-        const float listTop = kPadY + 22.0f;
+    if (m_mode == Mode::WindowList || m_mode == Mode::AppContextMenu || m_mode == Mode::BarMenu) {
+        const float listTop = kPadY + kHeaderHeight;
         const int maxRows = (m_mode == Mode::WindowList)
                                 ? static_cast<int>(m_windows.size())
                                 : static_cast<int>(m_menuActions.size());
@@ -308,11 +368,8 @@ void TaskbarFlyout::onMouseMove(int xPx, int yPx) {
         if (dipY >= gridTop && dipX >= kPadX) {
             const int col = static_cast<int>((dipX - kPadX) / (kTrayCellSize + kTrayCellGap));
             const int row = static_cast<int>((dipY - gridTop) / (kTrayCellSize + kTrayCellGap));
-            const float cellX =
-                kPadX + static_cast<float>(col) * (kTrayCellSize + kTrayCellGap);
-            const float cellY =
-                gridTop + static_cast<float>(row) * (kTrayCellSize + kTrayCellGap);
-
+            const float cellX = kPadX + static_cast<float>(col) * (kTrayCellSize + kTrayCellGap);
+            const float cellY = gridTop + static_cast<float>(row) * (kTrayCellSize + kTrayCellGap);
             if (col >= 0 && col < kTrayCols && dipX <= cellX + kTrayCellSize &&
                 dipY <= cellY + kTrayCellSize) {
                 const int idx = row * kTrayCols + col;
@@ -325,7 +382,6 @@ void TaskbarFlyout::onMouseMove(int xPx, int yPx) {
             }
         }
     }
-
     if (nextRow != m_hoverRow || nextClose != m_hoverCloseBtn || nextPin != m_hoverPinBtn) {
         m_hoverRow = nextRow;
         m_hoverCloseBtn = nextClose;
@@ -336,12 +392,12 @@ void TaskbarFlyout::onMouseMove(int xPx, int yPx) {
 
 void TaskbarFlyout::onLeftClick(int xPx, int yPx) {
     onMouseMove(xPx, yPx);
-
     if (m_mode == Mode::WindowList && m_hoverRow >= 0 &&
         m_hoverRow < static_cast<int>(m_windows.size())) {
-        HWND target = m_windows[static_cast<size_t>(m_hoverRow)].hwnd;
+        const HWND target = m_windows[static_cast<size_t>(m_hoverRow)].hwnd;
+        const bool close = m_hoverCloseBtn;
         hide();
-        if (m_hoverCloseBtn) {
+        if (close) {
             if (m_callbacks.onCloseWindow) {
                 m_callbacks.onCloseWindow(target);
             }
@@ -350,22 +406,45 @@ void TaskbarFlyout::onLeftClick(int xPx, int yPx) {
         }
         return;
     }
-
-    if (m_mode == Mode::AppContextMenu && m_hoverRow >= 0 &&
+    if ((m_mode == Mode::AppContextMenu || m_mode == Mode::BarMenu) && m_hoverRow >= 0 &&
         m_hoverRow < static_cast<int>(m_menuActions.size())) {
         const auto kind = m_menuActions[static_cast<size_t>(m_hoverRow)].kind;
         const size_t appIdx = m_appIndex;
         hide();
-        if (kind == MenuAction::Kind::LaunchNew && m_callbacks.onLaunchNew) {
-            m_callbacks.onLaunchNew(appIdx);
-        } else if (kind == MenuAction::Kind::TogglePin && m_callbacks.onTogglePinApp) {
-            m_callbacks.onTogglePinApp(appIdx);
-        } else if (kind == MenuAction::Kind::CloseAll && m_callbacks.onCloseAllWindows) {
-            m_callbacks.onCloseAllWindows(appIdx);
+        switch (kind) {
+        case MenuAction::Kind::LaunchNew:
+            if (m_callbacks.onLaunchNew) {
+                m_callbacks.onLaunchNew(appIdx);
+            }
+            break;
+        case MenuAction::Kind::TogglePin:
+            if (m_callbacks.onTogglePinApp) {
+                m_callbacks.onTogglePinApp(appIdx);
+            }
+            break;
+        case MenuAction::Kind::CloseAll:
+            if (m_callbacks.onCloseAllWindows) {
+                m_callbacks.onCloseAllWindows(appIdx);
+            }
+            break;
+        case MenuAction::Kind::Settings:
+            if (m_callbacks.onOpenSettings) {
+                m_callbacks.onOpenSettings();
+            }
+            break;
+        case MenuAction::Kind::TaskManager:
+            if (m_callbacks.onOpenTaskManager) {
+                m_callbacks.onOpenTaskManager();
+            }
+            break;
+        case MenuAction::Kind::Visualizer:
+            if (m_callbacks.onToggleVisualizer) {
+                m_callbacks.onToggleVisualizer();
+            }
+            break;
         }
         return;
     }
-
     if (m_mode == Mode::TrayOverflow && m_hoverRow >= 0 &&
         m_hoverRow < static_cast<int>(m_trayItems.size())) {
         const TrayItem selected = m_trayItems[static_cast<size_t>(m_hoverRow)];
@@ -383,7 +462,6 @@ void TaskbarFlyout::onLeftClick(int xPx, int yPx) {
 
 void TaskbarFlyout::onRightClick(int xPx, int yPx) {
     onMouseMove(xPx, yPx);
-
     if (m_mode == Mode::TrayOverflow && m_hoverRow >= 0 &&
         m_hoverRow < static_cast<int>(m_trayItems.size())) {
         const TrayItem selected = m_trayItems[static_cast<size_t>(m_hoverRow)];
@@ -397,20 +475,17 @@ void TaskbarFlyout::onRightClick(int xPx, int yPx) {
 void TaskbarFlyout::paint() {
     PAINTSTRUCT ps{};
     BeginPaint(m_hwnd, &ps);
-
     const HRESULT hr = m_renderer.draw([this](ID2D1DeviceContext& dc) {
         const D2D1_SIZE_F size = dc.GetSize();
         const D2D1_ROUNDED_RECT panel = D2D1::RoundedRect(
             D2D1::RectF(0.5f, 0.5f, size.width - 0.5f, size.height - 0.5f), kCornerRadius,
             kCornerRadius);
-
         dc.FillRoundedRectangle(panel, m_renderer.brush(kBgTint));
-        if (auto sheen = m_renderer.verticalGradient(0.0f, size.height, kSheenTop, kSheenMid, 0.45f,
-                                                     kSheenBottom)) {
+        if (auto sheen = m_renderer.verticalGradient(0.0f, size.height, kSheenTop, kSheenMid,
+                                                     0.45f, kSheenBottom)) {
             dc.FillRoundedRectangle(panel, sheen.Get());
         }
         dc.DrawRoundedRectangle(panel, m_renderer.brush(kBorderRim), 1.0f);
-
         if (m_mode == Mode::Tooltip) {
             const D2D1_RECT_F textRect =
                 D2D1::RectF(12.0f, 2.0f, size.width - 12.0f, size.height - 2.0f);
@@ -420,41 +495,37 @@ void TaskbarFlyout::paint() {
             m_titleFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             return;
         }
-
-        // Header label for WindowList, AppContextMenu, and TrayOverflow
         const std::wstring header =
             (m_mode == Mode::TrayOverflow)
                 ? (m_hoverRow >= 0 && m_hoverRow < static_cast<int>(m_trayItems.size())
                        ? m_trayItems[static_cast<size_t>(m_hoverRow)].tooltip
                        : L"Hidden Tray Icons")
                 : m_headerTitle;
-
-        const D2D1_RECT_F headerRect = D2D1::RectF(kPadX + 4.0f, kPadY, size.width - kPadX, kPadY + 18.0f);
+        const D2D1_RECT_F headerRect =
+            D2D1::RectF(kPadX + 4.0f, kPadY, size.width - kPadX, kPadY + 18.0f);
         dc.DrawText(header.c_str(), static_cast<UINT32>(header.size()), m_titleFormat.Get(),
                     headerRect, m_renderer.brush(kMuted));
-
         if (m_mode == Mode::WindowList) {
-            float y = kPadY + 22.0f;
+            float y = kPadY + kHeaderHeight;
             for (int i = 0; i < static_cast<int>(m_windows.size()); ++i) {
                 const auto& win = m_windows[static_cast<size_t>(i)];
-                const D2D1_RECT_F rowRect = D2D1::RectF(kPadX, y, size.width - kPadX, y + kRowHeight);
+                const D2D1_RECT_F rowRect =
+                    D2D1::RectF(kPadX, y, size.width - kPadX, y + kRowHeight);
                 if (m_hoverRow == i) {
                     dc.FillRoundedRectangle(D2D1::RoundedRect(rowRect, 7.0f, 7.0f),
                                             m_renderer.brush(kRowHover));
                 }
                 if (win.active) {
                     dc.FillRoundedRectangle(
-                        D2D1::RoundedRect(
-                            D2D1::RectF(kPadX + 3.0f, y + 9.0f, kPadX + 6.0f, y + kRowHeight - 9.0f),
-                            1.5f, 1.5f),
+                        D2D1::RoundedRect(D2D1::RectF(kPadX + 3.0f, y + 9.0f, kPadX + 6.0f,
+                                                      y + kRowHeight - 9.0f),
+                                          1.5f, 1.5f),
                         m_renderer.brush(kAccent));
                 }
-
                 const D2D1_RECT_F labelRect =
                     D2D1::RectF(kPadX + 12.0f, y, size.width - kPadX - 28.0f, y + kRowHeight);
                 dc.DrawText(win.title.c_str(), static_cast<UINT32>(win.title.size()),
                             m_itemFormat.Get(), labelRect, m_renderer.brush(kText));
-
                 const D2D1_RECT_F closeRect =
                     D2D1::RectF(size.width - kPadX - 22.0f, y + 6.0f, size.width - kPadX - 2.0f,
                                 y + kRowHeight - 6.0f);
@@ -467,74 +538,72 @@ void TaskbarFlyout::paint() {
             }
             return;
         }
-
-        if (m_mode == Mode::AppContextMenu) {
-            float y = kPadY + 22.0f;
+        if (m_mode == Mode::AppContextMenu || m_mode == Mode::BarMenu) {
+            float y = kPadY + kHeaderHeight;
             for (int i = 0; i < static_cast<int>(m_menuActions.size()); ++i) {
                 const auto& act = m_menuActions[static_cast<size_t>(i)];
-                const D2D1_RECT_F rowRect = D2D1::RectF(kPadX, y, size.width - kPadX, y + kRowHeight);
-                if (m_hoverRow == i) {
+                const D2D1_RECT_F rowRect =
+                    D2D1::RectF(kPadX, y, size.width - kPadX, y + kRowHeight);
+                const bool hovered = (m_hoverRow == i);
+                if (hovered) {
                     dc.FillRoundedRectangle(D2D1::RoundedRect(rowRect, 7.0f, 7.0f),
                                             m_renderer.brush(kRowHover));
                 }
-                const D2D1_RECT_F labelRect =
-                    D2D1::RectF(kPadX + 10.0f, y, size.width - kPadX - 8.0f, y + kRowHeight);
+                const float glyphTop = y + (kRowHeight - kGlyphSize) * 0.5f;
+                const D2D1_RECT_F glyphRect =
+                    D2D1::RectF(kPadX + 9.0f, glyphTop, kPadX + 9.0f + kGlyphSize,
+                                glyphTop + kGlyphSize);
+                drawMenuGlyph(dc, m_renderer, act.kind, glyphRect, hovered ? kAccent : kMuted);
+                const D2D1_RECT_F labelRect = D2D1::RectF(kPadX + kLabelInset, y,
+                                                          size.width - kPadX - 8.0f,
+                                                          y + kRowHeight);
                 dc.DrawText(act.label.c_str(), static_cast<UINT32>(act.label.size()),
                             m_itemFormat.Get(), labelRect, m_renderer.brush(kText));
                 y += kRowHeight;
             }
             return;
         }
-
         if (m_mode == Mode::TrayOverflow) {
             if (m_trayItems.empty()) {
                 const D2D1_RECT_F emptyRect =
                     D2D1::RectF(kPadX, kPadY + 24.0f, size.width - kPadX, size.height - kPadY);
-                dc.DrawText(L"All tray icons are on taskbar", 29, m_itemFormat.Get(), emptyRect,
-                            m_renderer.brush(kMuted));
+                constexpr wchar_t kEmptyText[] = L"All tray icons are on taskbar";
+                dc.DrawText(kEmptyText, static_cast<UINT32>(std::size(kEmptyText) - 1),
+                            m_itemFormat.Get(), emptyRect, m_renderer.brush(kMuted));
                 return;
             }
-
             const float gridTop = kPadY + 24.0f;
             for (int i = 0; i < static_cast<int>(m_trayItems.size()); ++i) {
                 const int col = i % kTrayCols;
                 const int row = i / kTrayCols;
-                const float cellX =
-                    kPadX + static_cast<float>(col) * (kTrayCellSize + kTrayCellGap);
-                const float cellY =
-                    gridTop + static_cast<float>(row) * (kTrayCellSize + kTrayCellGap);
-
+                const float cellX = kPadX + static_cast<float>(col) * (kTrayCellSize + kTrayCellGap);
+                const float cellY = gridTop + static_cast<float>(row) * (kTrayCellSize + kTrayCellGap);
                 const D2D1_RECT_F cellRect =
                     D2D1::RectF(cellX, cellY, cellX + kTrayCellSize, cellY + kTrayCellSize);
                 if (m_hoverRow == i) {
                     dc.FillRoundedRectangle(D2D1::RoundedRect(cellRect, 8.0f, 8.0f),
                                             m_renderer.brush(kRowHover));
                 }
-
                 const auto& item = m_trayItems[static_cast<size_t>(i)];
                 if (item.icon) {
                     const float iconOff = (kTrayCellSize - 18.0f) / 2.0f;
-                    const D2D1_RECT_F iconRect =
-                        D2D1::RectF(cellX + iconOff, cellY + iconOff, cellX + iconOff + 18.0f,
-                                    cellY + iconOff + 18.0f);
-                    dc.DrawBitmap(item.icon.Get(), iconRect, 1.0f,
-                                  D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+                    dc.DrawBitmap(item.icon.Get(),
+                                  D2D1::RectF(cellX + iconOff, cellY + iconOff,
+                                              cellX + iconOff + 18.0f, cellY + iconOff + 18.0f),
+                                  1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
                 }
-
-                // Top-right "+" badge on hover to promote tray icon directly onto taskbar
+                // Hover badge promotes the tray icon onto the dock.
                 if (m_hoverRow == i) {
-                    const D2D1_RECT_F pinBadge = D2D1::RectF(
-                        cellX + kTrayCellSize - 14.0f, cellY + 2.0f, cellX + kTrayCellSize - 2.0f,
-                        cellY + 14.0f);
-                    dc.FillRoundedRectangle(
-                        D2D1::RoundedRect(pinBadge, 4.0f, 4.0f),
-                        m_renderer.brush(m_hoverPinBtn ? kAccent : kPinBadgeBg));
+                    const D2D1_RECT_F pinBadge =
+                        D2D1::RectF(cellX + kTrayCellSize - 14.0f, cellY + 2.0f,
+                                    cellX + kTrayCellSize - 2.0f, cellY + 14.0f);
+                    dc.FillRoundedRectangle(D2D1::RoundedRect(pinBadge, 4.0f, 4.0f),
+                                            m_renderer.brush(m_hoverPinBtn ? kAccent : kPinBadgeBg));
                     dc.DrawText(L"+", 1, m_badgeFormat.Get(), pinBadge, m_renderer.brush(kText));
                 }
             }
         }
     });
-
     EndPaint(m_hwnd, &ps);
     if (hr == D2DERR_RECREATE_TARGET) {
         InvalidateRect(m_hwnd, nullptr, FALSE);
