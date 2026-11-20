@@ -40,16 +40,32 @@ RECT AppBar::dock(HWND hwnd, int thickness, TaskbarEdge edge) {
     GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &mi);
     APPBARDATA abd = makeData(hwnd);
     abd.rc = mi.rcMonitor;
-    if (edge == TaskbarEdge::Top) {
+    switch (edge) {
+    case TaskbarEdge::Left:
+        abd.uEdge = ABE_LEFT;
+        abd.rc.right = abd.rc.left + thickness;
+        SHAppBarMessage(ABM_QUERYPOS, &abd);
+        abd.rc.right = abd.rc.left + thickness;
+        break;
+    case TaskbarEdge::Right:
+        abd.uEdge = ABE_RIGHT;
+        abd.rc.left = abd.rc.right - thickness;
+        SHAppBarMessage(ABM_QUERYPOS, &abd);
+        abd.rc.left = abd.rc.right - thickness;
+        break;
+    case TaskbarEdge::Top:
         abd.uEdge = ABE_TOP;
         abd.rc.bottom = abd.rc.top + thickness;
         SHAppBarMessage(ABM_QUERYPOS, &abd);
         abd.rc.bottom = abd.rc.top + thickness;
-    } else {
+        break;
+    case TaskbarEdge::Bottom:
+    default:
         abd.uEdge = ABE_BOTTOM;
         abd.rc.top = abd.rc.bottom - thickness;
         SHAppBarMessage(ABM_QUERYPOS, &abd);
         abd.rc.top = abd.rc.bottom - thickness;
+        break;
     }
     SHAppBarMessage(ABM_SETPOS, &abd);
     return abd.rc;

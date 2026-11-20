@@ -1,18 +1,19 @@
 /**
  * @file TaskbarUI.h
  *
- * @version 1.7.0
+ * @version 1.8.0
  * @author BleckWolf25
  * @license MIT
  *
- * @summary Floating Liquid Glass dock replacing the native Windows taskbar
+ * @summary Floating Liquid Glass dock replacing the native Windows taskbar on any screen edge
  *
  * @description
  * Owns the dock window and wires the shell together: preference snapshot and restore guard,
- * ShellTaskbar suppression, AppBar reservation on the user's configured edge, the task and tray
+ * ShellTaskbar suppression, AppBar reservation on the configured edge, the task and tray
  * trackers, the clock, the flyout, the visibility guard and the optional music visualizer.
- * Windows personalization drives metrics, alignment and which shell slots appear; geometry comes
- * from TaskbarLayout and frames from paintTaskbar.
+ * Windows personalization drives metrics, alignment and which shell slots appear. Input is
+ * mapped into the layout's long-axis space so one gesture path serves horizontal and vertical
+ * docks, and flyouts are anchored on the bar's inner edge.
  *
  * @since 17/11/2026
  * @updated 20/11/2026
@@ -41,11 +42,12 @@ protected:
     LRESULT onMessage(UINT msg, WPARAM wp, LPARAM lp) override;
 private:
     TaskbarLayout currentLayout() const;
+    FlyoutSide flyoutSide() const;
+    POINT anchorFromAlong(float along) const;
+    void applyClockAlignment();
     void dock();
     void toggleVisualizer();
-    void showBarContextMenu(int anchorScreenX);
-    int screenXFromDip(float dipX) const;
-    int barEdgeScreen() const;
+    void showBarContextMenu(POINT anchorScreen);
     void showHoverFlyout(const TaskbarHit& hit);
     void showNativeSystemMenu(HWND target, int screenX, int screenY);
     void onMouseMove(int xPx, int yPx);
@@ -67,7 +69,7 @@ private:
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_timeFormat;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_dateFormat;
     TaskbarSettings m_settings{};
-    float m_barWidthDip = 0.0f;
+    float m_barLengthDip = 0.0f;
     TaskbarHit m_hover{};
     bool m_trackingMouse = false;
     bool m_pointerDown = false;

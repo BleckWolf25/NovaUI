@@ -1,21 +1,22 @@
 /**
  * @file TaskbarPaint.cpp
  *
- * @version 1.1.0
+ * @version 1.2.0
  * @author BleckWolf25
  * @license MIT
  *
- * @summary Implementation of the settings-driven Liquid Glass dock frame renderer
+ * @summary Implementation of the axis-mapped Liquid Glass dock frame renderer
  *
  * @description
- * Composites the glass body and rims, the Start prism, the enabled Task View, search, widgets
- * and Resume glyphs, dividers, the overflow chevron, promoted tray icons, the visualizer strip,
- * app lenses with running pills, attention highlights and badges, and the shadowed clock stack.
- * Every position and size derives from the scaled TaskbarMetrics so the dock follows the Windows
- * size setting, and badge or attention drawing is skipped when the user disabled it.
+ * Composites the glass body and inner rims, the Start prism, the enabled Task View, search,
+ * widgets and Resume glyphs, dividers, the overflow chevron, promoted tray icons, the visualizer
+ * strip, app lenses with running pills, attention highlights and badges, and the shadowed clock.
+ * Every rectangle is produced by TaskbarLayout::band so the same code draws a horizontal dock on
+ * the top or bottom edge and a vertical dock on the left or right edge, with icons and text kept
+ * upright. Badge and attention drawing are gated by the user's taskbar settings.
  *
  * @since 18/11/2026
- * @updated 18/11/2026
+ * @updated 20/11/2026
  */
 // ---------- IMPORTS
 #include "Modules/TaskbarPaint.h"
@@ -31,13 +32,13 @@ HRESULT paintTaskbar(Renderer& renderer, const TaskbarPaintState& state) {
         const D2D1_RECT_F fullRect = D2D1::RectF(0.0f, 0.0f, size.width, size.height);
         dc.FillRectangle(fullRect, renderer.brush(GlassBar::kBaseTint));
         if (auto sheen = renderer.verticalGradient(0.0f, size.height, GlassBar::kSheenTop,
-                                                   GlassBar::kSheenMid, 0.42f,
-                                                   GlassBar::kSheenBottom)) {
+                                                  GlassBar::kSheenMid, 0.42f,
+                                                  GlassBar::kSheenBottom)) {
             dc.FillRectangle(fullRect, sheen.Get());
         }
-        dc.FillRectangle(D2D1::RectF(0.0f, 0.0f, size.width, 1.0f),
+        dc.FillRectangle(l.band(0.0f, l.length, l.cross - 1.0f, l.cross),
                          renderer.brush(GlassBar::kTopSpecular));
-        dc.FillRectangle(D2D1::RectF(0.0f, 1.0f, size.width, 2.0f),
+        dc.FillRectangle(l.band(0.0f, l.length, l.cross - 2.0f, l.cross - 1.0f),
                          renderer.brush(GlassBar::kInnerBevel));
         const auto drawLens = [&](const D2D1_RECT_F& rect, bool active, bool hovered,
                                   bool dragged = false) {
@@ -56,20 +57,24 @@ HRESULT paintTaskbar(Renderer& renderer, const TaskbarPaintState& state) {
                 dc.DrawRoundedRectangle(lens, rim.Get(), 1.0f);
             }
         };
-        const auto drawDivider = [&](float divX) {
+        const auto drawDivider = [&](float along) {
+            const D2D1_RECT_F rect = l.band(along, along + m.dividerWidth, 10.0f, l.cross - 10.0f);
             if (auto brush = renderer.verticalGradient(
-                    10.0f, size.height - 10.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.01f),
+                    rect.top, rect.bottom, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.01f),
                     D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f), 0.5f,
                     D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.01f))) {
-                dc.FillRectangle(
-                    D2D1::RectF(divX, 10.0f, divX + m.dividerWidth, size.height - 10.0f),
-                    brush.Get());
+                dc.FillRectangle(rect, brush.Get());
             }
         };
-        const auto slotRect = [&](float left) {
-            return D2D1::RectF(left, l.slotTop, left + m.slotSize, l.slotTop + m.slotSize);
+        const auto insetSquare = [](const D2D1_RECT_F& rect, float inset) {
+            return D2D1::RectF(rect.left + inset, rect.top + inset, rect.right - inset,
+                               rect.bottom - inset);
         };
-        const D2D1_RECT_F startRect = slotRect(l.startLeft);
+        const auto shadowOf = [](const D2D1_RECT_F& rect) {
+            return D2D1::RectF(rect.left + 1.0f, rect.top + 1.0f, rect.right + 1.0f,
+                               rect.bottom + 1.0f);
+        };
+        const D2D1_RECT_F startRect = l.slot(l.startLeft, m.slotSize);
         const bool startHovered = (state.hover.zone == TaskbarZone::Start);
         drawLens(startRect, false, startHovered);
         const float cx = (startRect.left + startRect.right) * 0.5f;
@@ -110,7 +115,7 @@ HRESULT paintTaskbar(Renderer& renderer, const TaskbarPaintState& state) {
         }
         drawDivider(l.startLeft + m.slotSize + m.sectionGap);
         if (l.settings.showTaskView) {
-            const D2D1_RECT_F rect = slotRect(l.taskViewLeft);
+            const D2D1_RECT_F rect = l.slot(l.taskViewLeft, m.slotSize);
             const bool hovered = (state.hover.zone == TaskbarZone::TaskView);
             drawLens(rect, false, hovered);
             const float gx = (rect.left + rect.right) * 0.5f;
@@ -129,21 +134,22 @@ HRESULT paintTaskbar(Renderer& renderer, const TaskbarPaintState& state) {
                 front, renderer.brush(hovered ? GlassBar::kAccent : GlassBar::kMuted), 1.3f);
         }
         if (l.settings.showSearch) {
-            const D2D1_RECT_F rect = slotRect(l.searchLeft);
+            const D2D1_RECT_F rect = l.slot(l.searchLeft, m.slotSize);
             const bool hovered = (state.hover.zone == TaskbarZone::Search);
             drawLens(rect, false, hovered);
             const float gx = (rect.left + rect.right) * 0.5f;
             const float gy = (rect.top + rect.bottom) * 0.5f;
             const float radius = 5.0f * scale;
+            const D2D1_COLOR_F tint = hovered ? GlassBar::kAccent : GlassBar::kMuted;
             dc.DrawEllipse(D2D1::Ellipse(D2D1::Point2F(gx - 1.5f * scale, gy - 1.5f * scale),
                                          radius, radius),
-                           renderer.brush(hovered ? GlassBar::kAccent : GlassBar::kMuted), 1.4f);
+                           renderer.brush(tint), 1.4f);
             dc.DrawLine(D2D1::Point2F(gx + 2.4f * scale, gy + 2.4f * scale),
                         D2D1::Point2F(gx + 6.0f * scale, gy + 6.0f * scale),
-                        renderer.brush(hovered ? GlassBar::kAccent : GlassBar::kMuted), 1.6f);
+                        renderer.brush(tint), 1.6f);
         }
         if (l.settings.showWidgets) {
-            const D2D1_RECT_F rect = slotRect(l.widgetsLeft);
+            const D2D1_RECT_F rect = l.slot(l.widgetsLeft, m.slotSize);
             const bool hovered = (state.hover.zone == TaskbarZone::Widgets);
             drawLens(rect, false, hovered);
             const float gx = (rect.left + rect.right) * 0.5f;
@@ -160,7 +166,7 @@ HRESULT paintTaskbar(Renderer& renderer, const TaskbarPaintState& state) {
                 renderer.brush(tint), 1.3f);
         }
         if (l.settings.showResume) {
-            const D2D1_RECT_F rect = slotRect(l.resumeLeft);
+            const D2D1_RECT_F rect = l.slot(l.resumeLeft, m.slotSize);
             const bool hovered = (state.hover.zone == TaskbarZone::Resume);
             drawLens(rect, false, hovered);
             const float gx = (rect.left + rect.right) * 0.5f;
@@ -179,8 +185,8 @@ HRESULT paintTaskbar(Renderer& renderer, const TaskbarPaintState& state) {
                         D2D1::Point2F(gx + 3.0f * scale, gy), renderer.brush(tint), 1.4f);
         }
         if (l.showVisualizer && l.visualizerRight > l.visualizerLeft) {
-            const float baseline = size.height - 8.0f * scale;
-            const float maxHeight = std::max(4.0f, size.height - 18.0f * scale);
+            const float baseline = 8.0f * scale;
+            const float maxHeight = std::max(4.0f, l.cross - 18.0f * scale);
             const size_t bars = state.visualizerLevels.size();
             const float span = l.visualizerRight - l.visualizerLeft;
             if (bars > 0) {
@@ -188,48 +194,56 @@ HRESULT paintTaskbar(Renderer& renderer, const TaskbarPaintState& state) {
                 const float barWidth = std::max(1.5f, stride * 0.55f);
                 for (size_t i = 0; i < bars; ++i) {
                     const float level = std::clamp(state.visualizerLevels[i], 0.0f, 1.0f);
-                    const float barHeight = std::max(1.5f, level * maxHeight);
-                    const float left = l.visualizerLeft + static_cast<float>(i) * stride;
+                    const float barLength = std::max(1.5f, level * maxHeight);
+                    const float along = l.visualizerLeft + static_cast<float>(i) * stride;
                     dc.FillRoundedRectangle(
-                        D2D1::RoundedRect(D2D1::RectF(left, baseline - barHeight,
-                                                      left + barWidth, baseline),
+                        D2D1::RoundedRect(l.band(along, along + barWidth, baseline,
+                                                 baseline + barLength),
                                           1.0f, 1.0f),
                         renderer.brush(level > 0.02f ? GlassBar::kAccent : GlassBar::kMuted));
                 }
             } else {
-                dc.DrawLine(D2D1::Point2F(l.visualizerLeft, baseline),
-                            D2D1::Point2F(l.visualizerRight, baseline),
-                            renderer.brush(GlassBar::kMuted), 1.2f);
+                const D2D1_RECT_F idle = l.band(l.visualizerLeft, l.visualizerRight, baseline,
+                                                baseline + 1.2f);
+                dc.FillRectangle(idle, renderer.brush(GlassBar::kMuted));
             }
         }
         drawDivider(l.clockLeft - m.sectionGap - m.dividerWidth);
-        const D2D1_RECT_F chevronRect = D2D1::RectF(l.chevronLeft, l.traySlotTop,
-                                                    l.traySectionRight,
-                                                    l.traySlotTop + m.traySlotSize);
+        const D2D1_RECT_F chevronRect = l.band(l.chevronLeft, l.traySectionRight, l.traySlotTop,
+                                               l.traySlotTop + m.traySlotSize);
         drawLens(chevronRect, state.trayOverflowOpen,
                  state.hover.zone == TaskbarZone::TrayOverflow);
         const float chevCx = (chevronRect.left + chevronRect.right) * 0.5f;
         const float chevCy = (chevronRect.top + chevronRect.bottom) * 0.5f;
-        dc.DrawLine(D2D1::Point2F(chevCx - 3.5f * scale, chevCy + 1.8f * scale),
-                    D2D1::Point2F(chevCx, chevCy - 1.8f * scale),
-                    renderer.brush(GlassBar::kMuted), 1.4f);
-        dc.DrawLine(D2D1::Point2F(chevCx, chevCy - 1.8f * scale),
-                    D2D1::Point2F(chevCx + 3.5f * scale, chevCy + 1.8f * scale),
-                    renderer.brush(GlassBar::kMuted), 1.4f);
-        const auto drawTraySlot = [&](int index, float drawX, bool dragged) {
+        const float chevArm = 3.5f * scale;
+        const float chevRise = 1.8f * scale;
+        ID2D1SolidColorBrush* chevBrush = renderer.brush(GlassBar::kMuted);
+        if (l.vertical) {
+            const float dir = l.mirrorCross ? -1.0f : 1.0f;
+            dc.DrawLine(D2D1::Point2F(chevCx - dir * chevRise, chevCy - chevArm),
+                        D2D1::Point2F(chevCx + dir * chevRise, chevCy), chevBrush, 1.4f);
+            dc.DrawLine(D2D1::Point2F(chevCx + dir * chevRise, chevCy),
+                        D2D1::Point2F(chevCx - dir * chevRise, chevCy + chevArm), chevBrush,
+                        1.4f);
+        } else {
+            const float dir = l.mirrorCross ? 1.0f : -1.0f;
+            dc.DrawLine(D2D1::Point2F(chevCx - chevArm, chevCy - dir * chevRise),
+                        D2D1::Point2F(chevCx, chevCy + dir * chevRise), chevBrush, 1.4f);
+            dc.DrawLine(D2D1::Point2F(chevCx, chevCy + dir * chevRise),
+                        D2D1::Point2F(chevCx + chevArm, chevCy - dir * chevRise), chevBrush,
+                        1.4f);
+        }
+        const auto drawTraySlot = [&](int index, float along, bool dragged) {
             const TrayItem& item = state.tray[static_cast<size_t>(index)];
-            const D2D1_RECT_F rect = D2D1::RectF(drawX, l.traySlotTop, drawX + m.traySlotSize,
-                                                 l.traySlotTop + m.traySlotSize);
+            const D2D1_RECT_F rect = l.band(along, along + m.traySlotSize, l.traySlotTop,
+                                            l.traySlotTop + m.traySlotSize);
             const bool hovered = (!state.dragging && state.hover.zone == TaskbarZone::Tray &&
                                   state.hover.index == index);
             drawLens(rect, false, hovered, dragged);
             if (item.icon) {
                 const float offset = (m.traySlotSize - m.trayIconSize) * 0.5f;
-                dc.DrawBitmap(item.icon.Get(),
-                              D2D1::RectF(drawX + offset, l.traySlotTop + offset,
-                                          drawX + offset + m.trayIconSize,
-                                          l.traySlotTop + offset + m.trayIconSize),
-                              1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+                dc.DrawBitmap(item.icon.Get(), insetSquare(rect, offset), 1.0f,
+                              D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
             }
         };
         for (int i = 0; i < static_cast<int>(state.tray.size()); ++i) {
@@ -253,14 +267,13 @@ HRESULT paintTaskbar(Renderer& renderer, const TaskbarPaintState& state) {
             drawTraySlot(state.dragFromIndex,
                          l.traySlotX(state.dragFromIndex) + state.dragDeltaDip, true);
         }
-        const auto drawAppSlot = [&](int index, float drawX, bool dragged) {
+        const auto drawAppSlot = [&](int index, float along, bool dragged) {
             const TaskItem& item = state.apps[static_cast<size_t>(index)];
-            const D2D1_RECT_F rect = slotRect(drawX);
+            const D2D1_RECT_F rect = l.slot(along, m.slotSize);
             const bool hovered = (!state.dragging && state.hover.zone == TaskbarZone::App &&
                                   state.hover.index == index);
-            const bool attention = item.attention && l.settings.showFlashing;
             drawLens(rect, item.active, hovered, dragged);
-            if (attention) {
+            if (item.attention && l.settings.showFlashing) {
                 const D2D1_ROUNDED_RECT lens =
                     D2D1::RoundedRect(rect, m.slotRadius, m.slotRadius);
                 dc.FillRoundedRectangle(lens, renderer.brush(GlassBar::kAttentionFill));
@@ -269,11 +282,8 @@ HRESULT paintTaskbar(Renderer& renderer, const TaskbarPaintState& state) {
             if (item.icon) {
                 const float offset = (m.slotSize - m.iconSize) * 0.5f;
                 const float opacity = (item.running || hovered || dragged) ? 1.0f : 0.92f;
-                dc.DrawBitmap(item.icon.Get(),
-                              D2D1::RectF(drawX + offset, l.slotTop + offset - 0.5f,
-                                          drawX + offset + m.iconSize,
-                                          l.slotTop + offset + m.iconSize - 0.5f),
-                              opacity, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+                dc.DrawBitmap(item.icon.Get(), insetSquare(rect, offset), opacity,
+                              D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
             }
             if (item.attention && l.settings.showBadges) {
                 const float radius = 3.2f * scale;
@@ -287,37 +297,33 @@ HRESULT paintTaskbar(Renderer& renderer, const TaskbarPaintState& state) {
                 return;
             }
             if (item.windows.size() > 1) {
-                const float groupWidth = 14.0f * scale;
-                const float leftX = drawX + (m.slotSize - groupWidth) * 0.5f;
+                const float groupLength = 14.0f * scale;
+                const float first = along + (m.slotSize - groupLength) * 0.5f;
                 dc.FillRoundedRectangle(
-                    D2D1::RoundedRect(D2D1::RectF(leftX, size.height - 4.5f * scale,
-                                                  leftX + 8.0f * scale,
-                                                  size.height - 2.5f * scale),
+                    D2D1::RoundedRect(l.band(first, first + 8.0f * scale, 2.5f * scale,
+                                             4.5f * scale),
                                       1.0f, 1.0f),
                     renderer.brush(item.active ? GlassBar::kAccent : GlassBar::kMuted));
                 dc.FillRoundedRectangle(
-                    D2D1::RoundedRect(D2D1::RectF(leftX + 10.0f * scale,
-                                                  size.height - 4.5f * scale,
-                                                  leftX + groupWidth,
-                                                  size.height - 2.5f * scale),
+                    D2D1::RoundedRect(l.band(first + 10.0f * scale, first + groupLength,
+                                             2.5f * scale, 4.5f * scale),
                                       1.0f, 1.0f),
                     renderer.brush(GlassBar::kMuted));
                 return;
             }
-            const float pillWidth = (item.active ? 12.0f : 4.5f) * scale;
-            const float pillX = drawX + (m.slotSize - pillWidth) * 0.5f;
+            const float pillLength = (item.active ? 12.0f : 4.5f) * scale;
+            const float pillAlong = along + (m.slotSize - pillLength) * 0.5f;
             if (item.active) {
                 dc.FillRoundedRectangle(
-                    D2D1::RoundedRect(D2D1::RectF(pillX - 2.0f * scale,
-                                                  size.height - 5.5f * scale,
-                                                  pillX + pillWidth + 2.0f * scale,
-                                                  size.height - 1.5f * scale),
+                    D2D1::RoundedRect(l.band(pillAlong - 2.0f * scale,
+                                             pillAlong + pillLength + 2.0f * scale,
+                                             1.5f * scale, 5.5f * scale),
                                       2.0f, 2.0f),
                     renderer.brush(GlassBar::kAccentGlow));
             }
             dc.FillRoundedRectangle(
-                D2D1::RoundedRect(D2D1::RectF(pillX, size.height - 4.5f * scale,
-                                              pillX + pillWidth, size.height - 2.5f * scale),
+                D2D1::RoundedRect(l.band(pillAlong, pillAlong + pillLength, 2.5f * scale,
+                                         4.5f * scale),
                                   1.0f, 1.0f),
                 renderer.brush(item.active ? GlassBar::kAccent : GlassBar::kMuted));
         };
@@ -335,11 +341,11 @@ HRESULT paintTaskbar(Renderer& renderer, const TaskbarPaintState& state) {
                     visualSlot = i + 1;
                 }
             }
-            const float drawX = l.appSlotX(visualSlot);
-            if (drawX > l.maxAppX) {
+            const float along = l.appSlotX(visualSlot);
+            if (along > l.maxAppX) {
                 break;
             }
-            drawAppSlot(i, drawX, false);
+            drawAppSlot(i, along, false);
         }
         if (state.dragging && state.dragZone == TaskbarZone::App && state.dragFromIndex >= 0 &&
             state.dragFromIndex < static_cast<int>(state.apps.size())) {
@@ -347,24 +353,23 @@ HRESULT paintTaskbar(Renderer& renderer, const TaskbarPaintState& state) {
                         l.appSlotX(state.dragFromIndex) + state.dragDeltaDip, true);
         }
         if (state.hover.zone == TaskbarZone::Clock) {
-            drawLens(D2D1::RectF(l.clockLeft - 4.0f, l.slotTop, l.clockRight + 4.0f,
-                                 l.slotTop + m.slotSize),
+            drawLens(l.band(l.clockLeft - 4.0f, l.clockRight + 4.0f, l.slotTop,
+                            l.slotTop + m.slotSize),
                      false, true);
         }
-        const float thick = m.thickness;
+        const float clockPad = 4.0f * scale;
+        const float clockMid = (l.clockLeft + l.clockRight) * 0.5f;
         const D2D1_RECT_F timeRect =
-            D2D1::RectF(l.clockLeft, thick * 0.14f, l.clockRight, thick * 0.55f);
+            l.vertical ? l.band(l.clockLeft, clockMid, clockPad, l.cross - clockPad)
+                       : l.band(l.clockLeft, l.clockRight, l.cross * 0.45f, l.cross * 0.86f);
         const D2D1_RECT_F dateRect =
-            D2D1::RectF(l.clockLeft, thick * 0.52f, l.clockRight, thick * 0.89f);
-        const D2D1_RECT_F timeShadow =
-            D2D1::RectF(l.clockLeft, thick * 0.14f + 1.0f, l.clockRight, thick * 0.55f + 1.0f);
-        const D2D1_RECT_F dateShadow =
-            D2D1::RectF(l.clockLeft, thick * 0.52f + 1.0f, l.clockRight, thick * 0.89f + 1.0f);
+            l.vertical ? l.band(clockMid, l.clockRight, clockPad, l.cross - clockPad)
+                       : l.band(l.clockLeft, l.clockRight, l.cross * 0.11f, l.cross * 0.48f);
         const auto timeLength = static_cast<UINT32>(state.time.size());
         const auto dateLength = static_cast<UINT32>(state.date.size());
-        dc.DrawText(state.time.data(), timeLength, state.timeFormat, timeShadow,
+        dc.DrawText(state.time.data(), timeLength, state.timeFormat, shadowOf(timeRect),
                     renderer.brush(GlassBar::kTextShadow));
-        dc.DrawText(state.date.data(), dateLength, state.dateFormat, dateShadow,
+        dc.DrawText(state.date.data(), dateLength, state.dateFormat, shadowOf(dateRect),
                     renderer.brush(GlassBar::kTextShadow));
         dc.DrawText(state.time.data(), timeLength, state.timeFormat, timeRect,
                     renderer.brush(GlassBar::kText));

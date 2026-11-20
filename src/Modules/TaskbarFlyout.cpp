@@ -1,17 +1,17 @@
 /**
  * @file TaskbarFlyout.cpp
  *
- * @version 1.4.0
+ * @version 1.5.0
  * @author BleckWolf25
  * @license MIT
  *
- * @summary Implementation of the blur-free glass flyout popup window
+ * @summary Implementation of the edge-anchored glass flyout popup window
  *
  * @description
- * Renders ultra-transparent glass popups anchored to the dock edge, above a bottom bar or below
- * a top bar. Menu rows carry vector glyphs drawn with Direct2D so no icon assets are loaded.
- * Interactive modes arm a FlyoutDismissHook and also dismiss on focus loss, and clicks route to
- * window management, pinning, tray activation or the taskbar menu actions.
+ * Renders ultra-transparent glass popups grown away from the dock on the configured side and
+ * clamped inside the monitor. Menu rows carry vector glyphs drawn with Direct2D so no icon assets
+ * are loaded. Interactive modes arm a FlyoutDismissHook and also dismiss on focus loss, and
+ * clicks route to window management, pinning, tray activation or the taskbar menu actions.
  *
  * @since 17/11/2026
  * @updated 20/11/2026
@@ -143,8 +143,7 @@ void TaskbarFlyout::drawMenuGlyph(ID2D1DeviceContext& dc, Renderer& renderer,
     }
 }
 
-void TaskbarFlyout::showTooltip(int anchorCenterXScreen, int barEdgeScreen,
-                                const std::wstring& text) {
+void TaskbarFlyout::showTooltip(int anchorXScreen, int anchorYScreen, const std::wstring& text) {
     if (text.empty()) {
         hide();
         return;
@@ -154,10 +153,10 @@ void TaskbarFlyout::showTooltip(int anchorCenterXScreen, int barEdgeScreen,
     m_hoverRow = -1;
     const float estChars = static_cast<float>(std::min<size_t>(text.size(), 44));
     const float widthDip = std::clamp(estChars * 6.8f + 24.0f, 84.0f, 320.0f);
-    positionAndShow(anchorCenterXScreen, barEdgeScreen, widthDip, 30.0f, false);
+    positionAndShow(anchorXScreen, anchorYScreen, widthDip, 30.0f, false);
 }
 
-void TaskbarFlyout::showWindowList(int anchorCenterXScreen, int barEdgeScreen, size_t appIndex,
+void TaskbarFlyout::showWindowList(int anchorXScreen, int anchorYScreen, size_t appIndex,
                                    const TaskItem& item) {
     m_mode = Mode::WindowList;
     m_appIndex = appIndex;
@@ -167,20 +166,20 @@ void TaskbarFlyout::showWindowList(int anchorCenterXScreen, int barEdgeScreen, s
     m_hoverCloseBtn = false;
     const float heightDip =
         kPadY * 2.0f + kHeaderHeight + static_cast<float>(m_windows.size()) * kRowHeight;
-    positionAndShow(anchorCenterXScreen, barEdgeScreen, 256.0f, heightDip, false);
+    positionAndShow(anchorXScreen, anchorYScreen, 256.0f, heightDip, false);
 }
 
-void TaskbarFlyout::showMenuRows(int anchorCenterXScreen, int barEdgeScreen, float widthDip) {
+void TaskbarFlyout::showMenuRows(int anchorXScreen, int anchorYScreen, float widthDip) {
     if (m_menuActions.empty()) {
         hide();
         return;
     }
     const float heightDip =
         kPadY * 2.0f + kHeaderHeight + static_cast<float>(m_menuActions.size()) * kRowHeight;
-    positionAndShow(anchorCenterXScreen, barEdgeScreen, widthDip, heightDip, true);
+    positionAndShow(anchorXScreen, anchorYScreen, widthDip, heightDip, true);
 }
 
-void TaskbarFlyout::showAppContextMenu(int anchorCenterXScreen, int barEdgeScreen, size_t appIndex,
+void TaskbarFlyout::showAppContextMenu(int anchorXScreen, int anchorYScreen, size_t appIndex,
                                        const TaskItem& item, bool canPin) {
     m_mode = Mode::AppContextMenu;
     m_appIndex = appIndex;
@@ -200,10 +199,10 @@ void TaskbarFlyout::showAppContextMenu(int anchorCenterXScreen, int barEdgeScree
         m_menuActions.push_back({MenuAction::Kind::CloseAll,
                                  item.windows.size() > 1 ? L"Close all windows" : L"Close window"});
     }
-    showMenuRows(anchorCenterXScreen, barEdgeScreen, 228.0f);
+    showMenuRows(anchorXScreen, anchorYScreen, 228.0f);
 }
 
-void TaskbarFlyout::showBarContextMenu(int anchorCenterXScreen, int barEdgeScreen,
+void TaskbarFlyout::showBarContextMenu(int anchorXScreen, int anchorYScreen,
                                        bool visualizerEnabled) {
     m_mode = Mode::BarMenu;
     m_appIndex = 0;
@@ -212,13 +211,13 @@ void TaskbarFlyout::showBarContextMenu(int anchorCenterXScreen, int barEdgeScree
     m_hoverRow = -1;
     m_menuActions.push_back({MenuAction::Kind::Settings, L"Taskbar settings"});
     m_menuActions.push_back({MenuAction::Kind::TaskManager, L"Task Manager"});
-    m_menuActions.push_back(
-        {MenuAction::Kind::Visualizer, visualizerEnabled ? L"Hide music visualizer"
-                                                        : L"Show music visualizer"});
-    showMenuRows(anchorCenterXScreen, barEdgeScreen, 236.0f);
+    m_menuActions.push_back({MenuAction::Kind::Visualizer,
+                             visualizerEnabled ? L"Hide music visualizer"
+                                               : L"Show music visualizer"});
+    showMenuRows(anchorXScreen, anchorYScreen, 236.0f);
 }
 
-void TaskbarFlyout::showTrayOverflow(int anchorCenterXScreen, int barEdgeScreen,
+void TaskbarFlyout::showTrayOverflow(int anchorXScreen, int anchorYScreen,
                                      const std::vector<TrayItem>& overflowItems) {
     m_mode = Mode::TrayOverflow;
     m_trayItems = overflowItems;
@@ -232,7 +231,7 @@ void TaskbarFlyout::showTrayOverflow(int anchorCenterXScreen, int barEdgeScreen,
     const float widthDip = std::max(176.0f, kPadX * 2.0f + gridW);
     const float heightDip = kPadY * 2.0f + 24.0f + static_cast<float>(rows) * kTrayCellSize +
                             static_cast<float>(std::max(0, rows - 1)) * kTrayCellGap;
-    positionAndShow(anchorCenterXScreen, barEdgeScreen, widthDip, heightDip, true);
+    positionAndShow(anchorXScreen, anchorYScreen, widthDip, heightDip, true);
 }
 
 void TaskbarFlyout::hide() {
@@ -299,10 +298,10 @@ LRESULT TaskbarFlyout::onMessage(UINT msg, WPARAM wp, LPARAM lp) {
     return Window::onMessage(msg, wp, lp);
 }
 
-void TaskbarFlyout::positionAndShow(int anchorCenterXScreen, int barEdgeScreen, float widthDip,
+void TaskbarFlyout::positionAndShow(int anchorXScreen, int anchorYScreen, float widthDip,
                                     float heightDip, bool activate) {
     const HMONITOR mon =
-        MonitorFromPoint(POINT{anchorCenterXScreen, barEdgeScreen}, MONITOR_DEFAULTTOPRIMARY);
+        MonitorFromPoint(POINT{anchorXScreen, anchorYScreen}, MONITOR_DEFAULTTOPRIMARY);
     MONITORINFO mi{};
     mi.cbSize = sizeof(mi);
     GetMonitorInfoW(mon, &mi);
@@ -312,10 +311,25 @@ void TaskbarFlyout::positionAndShow(int anchorCenterXScreen, int barEdgeScreen, 
     const int widthPx = static_cast<int>(std::lround(widthDip * scale));
     const int heightPx = static_cast<int>(std::lround(heightDip * scale));
     const int gapPx = static_cast<int>(std::lround(kGapFromBarDip * scale));
-    int leftPx = anchorCenterXScreen - widthPx / 2;
+    int leftPx = anchorXScreen - widthPx / 2;
+    int topPx = anchorYScreen - heightPx - gapPx;
+    switch (m_side) {
+    case FlyoutSide::Above:
+        break;
+    case FlyoutSide::Below:
+        topPx = anchorYScreen + gapPx;
+        break;
+    case FlyoutSide::LeftOf:
+        leftPx = anchorXScreen - widthPx - gapPx;
+        topPx = anchorYScreen - heightPx / 2;
+        break;
+    case FlyoutSide::RightOf:
+        leftPx = anchorXScreen + gapPx;
+        topPx = anchorYScreen - heightPx / 2;
+        break;
+    }
     leftPx = std::clamp(leftPx, static_cast<int>(mi.rcMonitor.left) + 6,
                         static_cast<int>(mi.rcMonitor.right) - widthPx - 6);
-    int topPx = m_belowBar ? barEdgeScreen + gapPx : barEdgeScreen - heightPx - gapPx;
     topPx = std::clamp(topPx, static_cast<int>(mi.rcMonitor.top) + 6,
                        static_cast<int>(mi.rcMonitor.bottom) - heightPx - 6);
     SetWindowPos(m_hwnd, HWND_TOPMOST, leftPx, topPx, widthPx, heightPx,
@@ -554,9 +568,8 @@ void TaskbarFlyout::paint() {
                     D2D1::RectF(kPadX + 9.0f, glyphTop, kPadX + 9.0f + kGlyphSize,
                                 glyphTop + kGlyphSize);
                 drawMenuGlyph(dc, m_renderer, act.kind, glyphRect, hovered ? kAccent : kMuted);
-                const D2D1_RECT_F labelRect = D2D1::RectF(kPadX + kLabelInset, y,
-                                                          size.width - kPadX - 8.0f,
-                                                          y + kRowHeight);
+                const D2D1_RECT_F labelRect =
+                    D2D1::RectF(kPadX + kLabelInset, y, size.width - kPadX - 8.0f, y + kRowHeight);
                 dc.DrawText(act.label.c_str(), static_cast<UINT32>(act.label.size()),
                             m_itemFormat.Get(), labelRect, m_renderer.brush(kText));
                 y += kRowHeight;
