@@ -1,7 +1,7 @@
 /**
  * @file AppBar.h
  *
- * @version 1.0.0
+ * @version 1.1.0
  * @author BleckWolf25
  * @license MIT
  *
@@ -13,12 +13,12 @@
  * The shell reports layout changes through the WM_APP_APPBAR callback message.
  *
  * @since 17/11/2026
- * @updated 17/11/2026
+ * @updated 20/11/2026
  */
 #pragma once
 // ---------- IMPORTS
 #include <Windows.h>
-#include <shellapi.h>
+#include "TaskbarSettings.h"
 
 // ---------- CONSTANTS
 inline constexpr UINT WM_APP_APPBAR = WM_APP + 1;
@@ -27,7 +27,7 @@ inline constexpr UINT WM_APP_APPBAR = WM_APP + 1;
 class AppBar {
 public:
     bool add(HWND hwnd, UINT callbackMessage);
-    RECT dock(HWND hwnd, int thickness);
+    RECT dock(HWND hwnd, int thickness, TaskbarEdge edge);
     void remove(HWND hwnd);
 
 private:

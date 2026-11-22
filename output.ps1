@@ -1,7 +1,7 @@
 # output.ps1
 $projectPath = Get-Location
-$skipDirs = @(".git", "dist", "build")
-$skipExts = @("jpg", "webp", "jpeg", "png", "gif", "bmp", "tiff", "ico", "svg", "psd", "eps", "raw", "heif", "heic")
+$skipDirs = @(".git", "dist", "build", ".vscode")
+$skipExts = @("jpg", "webp", "jpeg", "png", "gif", "bmp", "tiff", "ico", "svg", "psd", "eps", "raw", "heif", "heic", "ps1", "sh", "gitignore")
 
 function Get-FileContent {
     param ([string]$path)

@@ -1,7 +1,7 @@
 /**
  * @file Window.cpp
  *
- * @version 1.0.0
+ * @version 1.1.1
  * @author BleckWolf25
  * @license MIT
  *
@@ -10,20 +10,27 @@
  * @description
  * Binds the HWND to its owning Window instance during WM_NCCREATE, dispatches messages to
  * onMessage inside a try/catch so no exception reaches the OS, and unbinds on WM_NCDESTROY.
- * The window class is registered once per class name.
+ * applyBackdrop enables borderless dark Acrylic translucency for Liquid Glass compositing.
  *
  * @since 17/11/2026
- * @updated 17/11/2026
+ * @updated 18/11/2026
  */
 // ---------- IMPORTS
 #include "Core/Window.h"
 
 #include <dwmapi.h>
 
+// ---------- CONSTANTS
+namespace {
+constexpr auto kDwmBorderColorAttr = static_cast<DWMWINDOWATTRIBUTE>(34);
+constexpr COLORREF kDwmColorNone = 0xFFFFFFFEu;
+}
+
 // ---------- IMPLEMENTATION
 bool Window::create(const wchar_t* className, DWORD style, DWORD exStyle) {
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
+    wc.style = CS_DBLCLKS;
     wc.lpfnWndProc = &Window::wndProc;
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
@@ -31,7 +38,6 @@ bool Window::create(const wchar_t* className, DWORD style, DWORD exStyle) {
     if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
         return false;
     }
-
     return CreateWindowExW(exStyle, className, L"NovaUI", style, 0, 0, 0, 0, nullptr, nullptr,
                            wc.hInstance, this) != nullptr;
 }
@@ -39,12 +45,11 @@ bool Window::create(const wchar_t* className, DWORD style, DWORD exStyle) {
 void Window::applyBackdrop() const {
     const BOOL dark = TRUE;
     const DWORD corners = DWMWCP_DONOTROUND;
-    const DWORD backdrop = DWMSBT_TRANSIENTWINDOW;
     const MARGINS margins{-1, -1, -1, -1};
 
     DwmSetWindowAttribute(m_hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
     DwmSetWindowAttribute(m_hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corners, sizeof(corners));
-    DwmSetWindowAttribute(m_hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
+    DwmSetWindowAttribute(m_hwnd, kDwmBorderColorAttr, &kDwmColorNone, sizeof(kDwmColorNone));
     DwmExtendFrameIntoClientArea(m_hwnd, &margins);
 }
 
